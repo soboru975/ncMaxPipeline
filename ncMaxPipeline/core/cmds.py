@@ -20,9 +20,9 @@ def select(names):
         f"Names must be string or list: {names}, {type(names)}"
     if isinstance(names, str):
         names = [names]
-    for name in names:
-        if exists_objects(name):
-            rt.select(get_object_by_name(name))
+    nodes = [get_node_by_name(name)
+             for name in names]
+    rt.select(nodes)
 
 
 def open_file(path: str = None):
@@ -53,6 +53,85 @@ def get_angle_between_vectors(vec1: np.ndarray, vec2: np.ndarray):
     dot_product = np.dot(vec1, vec2)
 
     return np.arccos(dot_product) * 180.0 / pi
+
+
+def to_numpy(value):
+    if rt.ClassOf(value) == rt.Point3:
+        return np.array([float(value.x), float(value.y), float(value.z)])
+    else:
+        raise NotImplementedError(value, type(value))
+
+
+def get_angle_between_position_to_axis_on_plane(node_name: str, axis: str, plane: str, target_position: np.ndarray):
+    """노드의 특정 축이 목표 위치와 벌어진 각도를 찾는다.
+    
+    단 축의 회전은 축들이 이루는 평면을 기준으로만 가능하다.
+    
+    Args:
+        axis: 'x', 'y', 'z' 
+            각도를 잴 특정 축을 입력한다.
+        plane: 축이 회전을 plane을 선택한다.
+            axis가 포함된 이름이어야 한다.
+            ex) axis == 'x' 이라면 plane은 'xy', 'xz' 이 가능하다.
+        target_position: 
+            각도를 잴 위치
+    """
+    if axis not in plane:
+        print(f"Axis must be in plane: {axis}, {plane}")
+        return
+    if not exists_objects(node_name):
+        print(f"Node does not exist: {node_name}")
+        return
+    world_mat = get_node_by_name(node_name).transform
+    if axis == 'x':
+        local_ptn = rt.Point3(1, 0, 0)
+    elif axis == 'y':
+        local_ptn = rt.Point3(0, 1, 0)
+    elif axis == 'z':
+        local_ptn = rt.Point3(0, 0, 1)
+    else:
+        raise NotImplementedError(axis)
+    world_ptn = local_ptn * world_mat
+    orig_ptn = world_mat.position
+    local_tgt_ptn = get_point3(target_position) * rt.Inverse(world_mat)
+
+    if axis == 'x':
+        if plane == 'xy':
+            local_tgt_ptn.z = 0
+        elif plane == 'xz':
+            local_tgt_ptn.y = 0
+        else:
+            raise NotImplementedError
+    elif axis == 'y':
+        if plane == 'yz':
+            local_tgt_ptn.x = 0
+        elif plane == 'xy':
+            local_tgt_ptn.z = 0
+        else:
+            raise NotImplementedError
+    elif axis == 'z':
+        if plane == 'yz':
+            local_tgt_ptn.x = 0
+        elif plane == 'xz':
+            local_tgt_ptn.y = 0
+        else:
+            raise NotImplementedError
+    else:
+        raise NotImplementedError
+
+    world_tgt_ptn = local_tgt_ptn * world_mat
+
+    vec_1 = world_ptn - orig_ptn
+    vec_2 = world_tgt_ptn - orig_ptn
+    return get_angle_between_vectors(to_numpy(vec_1), to_numpy(vec_2))
+
+
+def get_point3(value):
+    """입력한 값을 max의 point3으로 변환해 준다."""
+    if isinstance(value, (list, tuple, np.ndarray)):
+        return rt.Point3(float(value[0]), float(value[1]), float(value[2]))
+    else:
+        raise NotImplementedError(value, type(value))
 
 
 def exists_objects(names):
@@ -99,7 +178,7 @@ def delete(names):
         names = [names]
     for name in names:
         if exists_objects(name):
-            rt.delete(get_object_by_name(name))
+            rt.delete(get_node_by_name(name))
 
 
 def get_type_of_object(name: str):
@@ -109,7 +188,7 @@ def get_type_of_object(name: str):
         typ = ncm.get_type_of_object('Bip001 R Finger0Nub')
         print(typ == ncm.Typ.DUMMY)
     """
-    return rt.classOf(get_object_by_name(name))
+    return rt.classOf(get_node_by_name(name))
 
 
 def save_incremental():
@@ -176,7 +255,7 @@ def print_previous_functions(num=5):
         print(history - 2, get_previous_function_name(num=history))
 
 
-def get_object_by_name(name: str):
+def get_node_by_name(name: str):
     assert isinstance(name, str), f"Name must be string: {name}, {type(name)}"
     return rt.getNodeByName(name)
 
@@ -196,7 +275,7 @@ def get_bound_meshes_by_dummy(dummy: str) -> List[str]:
 
 def is_skinned_mesh(mesh: str) -> bool:
     """메쉬가 스킨되어 있는지 확인한다."""
-    for mod in get_object_by_name(mesh).modifiers:
+    for mod in get_node_by_name(mesh).modifiers:
         if rt.classOf(mod) == rt.Skin:
             return True
     else:
@@ -204,7 +283,7 @@ def is_skinned_mesh(mesh: str) -> bool:
 
 
 def get_skin_node(mesh: str):
-    for mod in get_object_by_name(mesh).modifiers:
+    for mod in get_node_by_name(mesh).modifiers:
         if rt.classOf(mod) == rt.Skin:
             return mod
     else:
@@ -225,7 +304,7 @@ def get_influences(mesh: str) -> List[str]:
 
 
 def unload_packages(print_result=False):
-    packages = ['ncMaxPipeline']
+    packages = ['ncMaxPipeline', 'AL_BipedRetargeter', 'VCToolsManager']
     reload_list = []
     for i in sys.modules.keys():
         for package in packages:

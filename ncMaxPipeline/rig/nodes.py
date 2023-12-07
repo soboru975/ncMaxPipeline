@@ -1,12 +1,14 @@
 from abc import abstractmethod, ABC
-from typing import List
+from typing import List, Optional
 
 import ncMaxPipeline as ncm
 import numpy as np
 from pymxs import runtime as rt
 
+
 def node(name: str):
     return _Node(name)
+
 
 def dummy(name: str):
     return _Dummy(name)
@@ -20,7 +22,7 @@ class _Object(ABC):
     """
 
     def __init__(self, name: str):
-        self.node = ncm.get_object_by_name(name)
+        self.node = ncm.get_node_by_name(name)
         if not self.exists:
             self.make(name)
 
@@ -41,15 +43,18 @@ class _Object(ABC):
         self.node.isHidden = not value
 
     @property
-    def parent(self) -> str:
-        return self.node.parent.name
+    def parent(self) -> Optional[str]:
+        if self.node.parent is None:
+            return None
+        else:
+            return self.node.parent.name
 
     @parent.setter
     def parent(self, value):
         if isinstance(value, _Object):
             self.node.parent = value.node
         elif isinstance(value, str):
-            self.node.parent = ncm.get_object_by_name(value)
+            self.node.parent = ncm.get_node_by_name(value)
         else:
             raise ValueError(value, type(value))
 
@@ -109,8 +114,7 @@ class _Node(_Object):
             if self.node.parent is None:
                 self.node.position = ptn
             else:
-                parent_transform = self.node.parent.transform
-                self.node.position = ptn * parent_transform
+                self.node.position = ptn * self.node.parent.transform
         else:
             raise ValueError(type(value))
 
@@ -185,27 +189,27 @@ class _Node(_Object):
 
     @property
     def rx(self):
-        return self.node.transform.rotation.x
+        return self.r[0]
 
     @rx.setter
     def rx(self, value):
-        self.node.transform.rotation.x = value
+        self.r = [value, self.ry, self.rz]
 
     @property
     def ry(self):
-        return self.node.rotation.y
+        return self.r[1]
 
     @ry.setter
     def ry(self, value):
-        self.node.transform.rotation.y = value
+        self.r = [self.rx, value, self.rz]
 
     @property
     def rz(self):
-        return self.node.rotation.z
+        return self.r[2]
 
     @rz.setter
     def rz(self, value):
-        self.node.transform.rotation.z = value
+        self.r = [self.rx, self.ry, value]
 
     @property
     def s(self):
@@ -256,13 +260,15 @@ class _Node(_Object):
         self.node.scale.z = value
 
     @property
-    def world_t(self):
+    def world_t(self) -> np.ndarray:
         return np.array([self.world_tx, self.world_ty, self.world_tz])
 
     @world_t.setter
     def world_t(self, value):
         if isinstance(value, (list, tuple, np.ndarray)):
             self.node.position = rt.Point3(float(value[0]), float(value[1]), float(value[2]))
+        elif rt.ClassOf(value) == rt.Point3:
+            self.node.position = value
         else:
             raise ValueError(type(value))
 
@@ -302,13 +308,17 @@ class _Node(_Object):
     def world_r(self, value):
         """world rotation 적용.
         
-        왜 world상의 이동이 같이 되는지는 아직 파악하지 못했다.
-        임시로 원래의 위치로 다시 이동을 시켜주자.
+        이게 원래 self.node.rotation으로 값을 넣었는데 값이 삐뚤어져서 들어간다.
+        그래서 이유는 모르겠지만 matrix로 변환해서 값을 넣었다.
+        
+        matrix를 만들때도 matrix에 .position을 먼저 입력하면 안된다.
+        아래처럼 rotation을 먼저 입력해야 한다.
         """
         if isinstance(value, (list, tuple, np.ndarray)):
-            world_t = self.world_t
-            self.node.rotation = rt.EulerAngles(float(value[0]), float(value[1]), float(value[2]))
-            self.world_t = world_t
+            mat = rt.Matrix3(1)
+            mat.rotation = rt.EulerToQuat(rt.EulerAngles(float(value[0]), float(value[1]), float(value[2])))
+            mat.position = rt.Point3(self.world_tx, self.world_ty, self.world_tz)
+            self.node.transform = mat
         else:
             raise ValueError(type(value))
 
@@ -400,6 +410,17 @@ class _Node(_Object):
 
     def make(self, name: str):
         pass
+
+    def make_grp(self, group_name: str = 'grp') -> '_Dummy':
+        """그룹을 만들어준다."""
+        grp = ncm.dummy(self.name + '_' + group_name)
+        grp.world_t = self.world_t
+        grp.world_r = self.world_r
+        
+        if self.parent is not None:
+            grp.parent = self.parent
+        self.parent = grp.name 
+        return grp
 
     def delete(self, with_children=False):
         """노드를 지워준다.

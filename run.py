@@ -1,5 +1,5 @@
 import numpy as np
-
+from scipy.optimize import optimize
 import ncMaxPipeline as ncm
 from pymxs import runtime as rt
 
@@ -7,6 +7,7 @@ path = 'D:/projects/max/unreal_to_biped/Rig_UniformMale_only_main_bones.max'
 ncm.open_file(path)
 
 char = ncm.get_fbx_character('root')
+char.delete_sub_bones()
 
 bp = ncm.biped()
 bp.make()
@@ -15,18 +16,8 @@ bp.match_to_fbx_character(char)
 
 
 # bp = ncm.biped()
-# # # # fbx_bone = ncm.dummy('thigh_r')
-# biped_bone = bp.bones['Bip001 R Calf']
+# bone = bp.bones['Bip001 Neck']
+# fbx_bone = ncm.dummy('neck_01')
 # 
-# rot = rt.EulerToQuat(rt.EulerAngles(0, 0, 0))
-# rt.biped.setTransform(biped_bone.node, rt.Name('rotation'), rot, False)
-# # 
-# # 
-# biped_bone.rz -= 12.237947637880364
-# # (quat 0.669917 0.113105 -0.731091 0.0626383)
-# # (quat 0.669917 0.113105 -0.731091 0.0626383)
-# print(biped_bone.world_r)
-
-
-# 11 (quat 0.678157 0.0410522 -0.733603 -0.015648)
-# 11 (quat 0.678157 0.0410522 -0.733603 -0.015648)
+# bone.world_t = fbx_bone.world_t
+# bone.world_r = fbx_bone.world_r

@@ -9,6 +9,14 @@ from ncMaxPipeline.rig import nodes
 
 
 def biped(name: str = 'Bip001'):
+    """biped 객체를 반환한다
+    
+    centimeter를 기준으로 작업이 되어 있어서 이를 바꿔준다.
+    """
+    if str(rt.units.SystemType) != 'centimeters':
+        print(f"System unit is not centimeters: {rt.units.SystemType}")
+        print(f"Automatically change system unit to centimeters")
+        rt.units.SystemType = rt.Name('centimeters')
     bp = _Biped(name)
     bp.make_preset = _BipedMakePresets.PROJECT_M
     bp.bone_preset = _BipedBonePresets.PROJECT_M
@@ -37,6 +45,8 @@ class _BipedMakePresetBase:
     metacarpal: bool = True  # 손바닥뼈
     reduce_thumb_count: bool = True  # 엄지 갯수를 줄일지 여부
     toe_joint_count: int = 1  # 발가락뼈 갯수
+    triangle_neck: bool = True  # 하이라키 변경 
+    # 켜주면 clavicle이 spin아래에 있다.. 꺼주면 clavicle이 neck 아래에 있다.
 
 
 class _BipedMakeProjectMPreset(_BipedMakePresetBase):
@@ -69,7 +79,7 @@ class _BipedBonePresetBase:
     Head = _BipedBoneData('head')
     Clavicle = _BipedBoneData('clavicle', True)
     UpperArm = _BipedBoneData('upperarm', True)
-    LowerArm = _BipedBoneData('lowerarm', True)
+    Forearm = _BipedBoneData('lowerarm', True)
     Hand = _BipedBoneData('hand', True)
     Finger0 = _BipedBoneData('thumb_01', True)
     Finger01 = _BipedBoneData('thumb_02', True)
@@ -118,9 +128,6 @@ class _BipedBoneToFBXBoneMatcherBase(ABC):
         self.bone = bone
 
     def __call__(self):
-        if not self.biped.figure_mode:
-            print(f"Figure mode is not on. Matchings will not be executed: {self.bone.name}")
-            return
         self._execute_match()
 
     @property
@@ -132,12 +139,68 @@ class _BipedBoneToFBXBoneMatcherBase(ABC):
     def biped(self):
         return self.bone.bones.biped
 
+    @property
+    def preset_fbx_bone_name(self):
+        name = getattr(self.biped.bone_preset, self.bone.pure_name).fbx_bone
+        if self.bone.drt == 'L':
+            name += '_l'
+        return name
+
     @abstractmethod
     def _execute_match(self):
         pass
 
+    def _get_fbx_bone_length(self, fbx_bone: nodes._Dummy):
+        """fbx 뼈의 길이를 구한다."""
+        child_fbx_bone = ncm.dummy(fbx_bone.children[0])
+        bone_length = np.linalg.norm(fbx_bone.world_t - child_fbx_bone.world_t)
+        return bone_length
 
-class _ComToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
+    def _set_key_to_bone(self):
+        """bone을 고정하기 위하여 키를 준다.
+    
+        Notes:
+            분명 회전값을 줬는데 내가 회전을 준대로 고정이 잘 안되어 있다면
+            아래의 두가지 키 주는 방식에서 방법을 바꿔보자.
+            setKey or setSelectedKey
+        """
+        if self.bone.is_com:
+            rt.biped.addNewKey(self.bone.node.controller.vertical.controller, 0)
+            rt.biped.addNewKey(self.bone.node.controller.horizontal.controller, 0)
+            rt.biped.addNewKey(self.bone.node.controller.turning.controller, 0)
+        else:
+            if self.bone.pure_name in ['Clavicle', 'UpperArm', 'Forearm', 'Hand', 'Head']:
+                rt.biped.setKey(self.bone.node, False, False, False)
+            elif any(name in self.bone.pure_name for name in ['Finger', 'Neck']):
+                rt.biped.setKey(self.bone.node, False, False, False)
+            else:
+                rt.biped.setSelectedKey(self.bone.node.controller)
+
+
+class _BipedBoneScaleToFBXBoneMatcherBase(_BipedBoneToFBXBoneMatcherBase):
+    pass
+
+
+class _BipedBonePoseToFBXBoneMatcherBase(_BipedBoneToFBXBoneMatcherBase):
+    """scale 을 변경할 때는 반드시 figure mode를 켜야 한다."""
+
+    def __call__(self):
+        self._execute_match()
+        self._set_key_to_bone()
+
+
+class _ComScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        return self.biped.name == self.bone.name
+
+    def _execute_match(self):
+        """scale은 필요없다"""
+        pass
+
+
+class _ComPoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
 
     @property
     def is_matched(self):
@@ -145,28 +208,563 @@ class _ComToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
 
     def _execute_match(self):
         """com 위치 설정
-        
+
         Notes:
             biped의 thigh는 독립적으로 위치조절을 할수가 없다.
-            단지 com의 위치만을 따라가는 것이다.
-            그러므로 import해온 fbx에 thigh의 biped bone을 맞추려면
-            com의 위치를 맞추어야 한다.  
+                단지 com의 위치만을 따라가는 것이다.
+                그러므로 import해온 fbx에 thigh의 biped bone을 맞추려면
+                com의 위치를 맞추어야 한다.  
+    
+                z, y만 맞추고 x는 pelvis에서 scale로 맞춰야 한다...
+                지금 fbx가 ue5에서 가져온거라 90도 회전이 되어있는데
+                다른 캐릭터는 또 계산해야 하는 축이 다를 수 있겠다. 
+                우선 축 문제는 신경 쓰지 않고 작업한다.
             
-            z, y만 맞추고 x는 pelvis에서 scale로 맞춰야 한다...
-            지금 fbx가 ue5에서 가져온거라 90도 회전이 되어있는데
-            다른 캐릭터는 또 계산해야 하는 축이 다를 수 있겠다. 
-            우선 축 문제는 신경 쓰지 않고 작업한다.
+            figure mode를 키는 이유
+                이건 spine 때문이다. spine의 위치 변경은 피규어 모드를 켯을때만 가능하다.
+                com의 경우 피규어 모드를 끄고 위치를 이동하면
+                피규어 모드를 켰을때 다시 처음 생성했을 때의 com의 위치로 변경되어 버린다.
+                그래서 spine의 위치를 똑바로 잡으려면 com이 피규어 모드을때 위치를 잡고 있어야한다. 
         """
-        thigh_l = ncm.get_object_by_name('thigh_l')
-        thigh_r = ncm.get_object_by_name('thigh_r')
+        self.biped.figure_mode = True
+        thigh_l = ncm.get_node_by_name('thigh_l')
+        thigh_r = ncm.get_node_by_name('thigh_r')
 
         avg_ptn = (thigh_l.transform.position + thigh_r.transform.position) / 2
         self.bone.world_t = 0, avg_ptn[1], avg_ptn[2]
-        # ptn = rt.Point3(0, avg_ptn[1], avg_ptn[2])
-        # rt.biped.setTransform(self.bone.node, rt.Name('pos'), ptn, False)
+        self.biped.figure_mode = False
 
 
-class _HeadBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
+class _ToeBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        """toe 이름은 보통 숫자가 붙어있다.
+
+        ex) Bip001 L Toe0
+        """
+        return 'Toe' in self.bone.pure_name and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        fbx_toe_len = self._get_fbx_toe_length()
+        foot_scale = rt.biped.getTransform(self.biped.bones[self.bone.parent].node,
+                                           rt.Name('scale'))
+        old_toe_scale = rt.biped.getTransform(self.bone.node, rt.Name('scale'))
+        scale = rt.Point3(old_toe_scale.x * fbx_toe_len / old_toe_scale.x,
+                          old_toe_scale.y,
+                          foot_scale.z)
+        rt.biped.setTransform(self.bone.node, rt.Name('scale'), scale, False)
+
+    def _get_fbx_toe_length(self):
+        if self.bone.drt == 'L':
+            fbx_toe = 'ball_l'
+            fbx_toe_end = 'toeEnd_l'
+        else:
+            fbx_toe = 'ball_r'
+            fbx_toe_end = 'toeEnd_r'
+
+        return float(np.linalg.norm(ncm.dummy(fbx_toe).world_t - ncm.dummy(fbx_toe_end).world_t))
+
+
+class _ToeBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        """toe 이름은 보통 숫자가 붙어있다.
+
+        ex) Bip001 L Toe0
+        """
+        return 'Toe' in self.bone.pure_name and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        """위치는 foot에서 이미 맞추었다"""
+        pass
+
+
+class _FootBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name == 'Foot' and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        fbx_bone_name = self.bone.pure_name.lower()
+        if self.bone.drt == 'L':
+            fbx_bone = ncm.dummy(fbx_bone_name + '_l')
+        else:
+            fbx_bone = ncm.dummy(fbx_bone_name + '_r')
+        self._match_scale(fbx_bone)
+
+    def _match_scale(self, fbx_bone):
+        """스케일을 수정한다.
+        
+        Notes:
+            toe의 위치를 맞추기 위해서는 toe의 위치를 옮기는게 아니고 foot의 스케일을 조절해야 한다.
+            
+            길이를 맞추는 방법
+                1. fbx foot과 fbx toe와의 위치를 구한다.
+                   fbx foot에서 직선을 내려서 직각 삼각형을 구한다.
+                2. 그 비율대로 biped foot의 스케일을 조절한다.            
+        """
+        fbx_foot_ptn = fbx_bone.world_t
+        fbx_toe_ptn = ncm.dummy(fbx_bone.children[0]).world_t
+        fbx_heel_ptn = fbx_foot_ptn.copy()
+        fbx_heel_ptn[2] = fbx_toe_ptn[2]
+
+        bone_foot_ptn = self.bone.world_t
+        bone_toe_ptn = self.biped.bones[self.bone.children[0]].world_t
+        bone_heel_ptn = bone_foot_ptn.copy()
+        bone_heel_ptn[2] = bone_toe_ptn[2]
+
+        x_rate = np.linalg.norm(fbx_foot_ptn - fbx_heel_ptn) / np.linalg.norm(bone_foot_ptn - bone_heel_ptn)
+        y_rate = np.linalg.norm(fbx_heel_ptn - fbx_toe_ptn) / np.linalg.norm(bone_heel_ptn - bone_toe_ptn)
+
+        old_scale = rt.biped.getTransform(self.bone.node, rt.Name('scale'))
+        scale = rt.Point3(float(old_scale.x * x_rate),
+                          float(old_scale.y * y_rate),
+                          old_scale.z)
+        rt.biped.setTransform(self.bone.node, rt.Name('scale'), scale, False)
+
+
+class _FootBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name == 'Foot' and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        fbx_bone_name = self.bone.pure_name.lower()
+        fbx_bone = ncm.dummy(fbx_bone_name + '_l')
+        self._match_rotation(fbx_bone)
+
+    def _match_rotation(self, fbx_bone: nodes._Dummy):
+        """rotation을 설정한다.
+
+        fbx과의 축을 완전히 일치 시키지 않는다.
+        biped의 발바닥면이 xy평면과 일치하게 해달라는 애니메이션팀의 요청에 따라
+        rx값만 수정한다.
+        """
+        ball = ncm.dummy(fbx_bone.children[0])
+        angle = ncm.get_angle_between_position_to_axis_on_plane(self.bone.name,
+                                                                axis='y', plane='yz',
+                                                                target_position=ball.world_t)
+        self.bone.rx -= angle
+
+
+class _SpineBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        """3개의 spine을 처음 spine 이름인 spine에서 전부 적용한다."""
+        return 'Spine' in self.bone.pure_name
+
+    def _execute_match(self):
+        """spine은 3개짜리로 가정하고 제작되었다."""
+        biped_spines_bones = self.biped.bones.find_bones_by_pure_name('Spine')
+        whole_spine_length = self._get_whole_spine_length()
+
+        self._set_length_to_spines(biped_spines_bones, whole_spine_length)
+        self._set_width_to_spines(biped_spines_bones)
+
+    def _set_width_to_spines(self, biped_spines_bones):
+        """가로가 너무 얇쌍해서 pelvis의 크기에 맞춘다."""
+        pelvis_sz = rt.biped.getTransform(self.biped.bones['Pelvis'].node, rt.Name('scale')).z * 1.5
+        old_scale = rt.biped.getTransform(biped_spines_bones[0].node, rt.Name('scale'))
+        for bone in biped_spines_bones:
+            scale = rt.Point3(old_scale.x, old_scale.y, pelvis_sz)
+            rt.biped.setTransform(bone.node, rt.Name('scale'), scale, False)
+
+    def _set_length_to_spines(self, biped_spines_bones: List['_BipedBone'], whole_spine_length: float):
+        """spine들의 길이를 설정한다"""
+        old_scale = rt.biped.getTransform(biped_spines_bones[0].node, rt.Name('scale'))
+        old_spine_length = old_scale.x * 3
+        scale_ratio = whole_spine_length / old_spine_length
+        for bone in biped_spines_bones:
+            scale = rt.Point3(old_scale.x * scale_ratio, old_scale.y, old_scale.z)
+            rt.biped.setTransform(bone.node, rt.Name('scale'), scale, False)
+
+    def _get_whole_spine_length(self):
+        """spine 전체 길이를 반환한다
+
+        애니메이션팀에서 특정하게 원하는 길이가 디테일하게 없어서
+        대략적으로만 계산한다.
+        첫번째 spine에서 어깨까지의 직선 길이를 허리 길이로 한다.
+        """
+        first_fbx_bone_ptn = ncm.dummy('spine_01').world_t
+        shoulder_fbx_bones_ptn = (ncm.dummy('clavicle_l').world_t + ncm.dummy('clavicle_r').world_t) / 2
+        return float(np.linalg.norm(first_fbx_bone_ptn - shoulder_fbx_bones_ptn))
+
+
+class _SpineBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        """3개의 spine을 처음 spine 이름인 spine에서 전부 적용한다."""
+        return self.bone.pure_name == 'Spine'
+
+    def _execute_match(self):
+        """spine은 3개짜리로 가정하고 제작되었다."""
+        self.biped.figure_mode = True
+        biped_spines_bones = self.biped.bones.find_bones_by_pure_name('Spine')
+
+        self._match_first_bone_position(biped_spines_bones)
+        self._set_rotation_rx_to_spines(biped_spines_bones)
+        self.biped.figure_mode = False
+
+    def _set_rotation_rx_to_spines(self, biped_spines_bones: List['_BipedBone']):
+        """애니메이션팀 요청으로 spine들이 척추를 따라 약간씩 회전하도록 한다."""
+        shoulder_fbx_bones_ptn = (ncm.dummy('clavicle_l').world_t + ncm.dummy('clavicle_r').world_t) / 2
+        angle = ncm.get_angle_between_position_to_axis_on_plane(biped_spines_bones[0].name,
+                                                                axis='x', plane='xy',
+                                                                target_position=shoulder_fbx_bones_ptn)
+        for bone in biped_spines_bones:
+            bone.rz -= angle / 3
+
+    def _match_first_bone_position(self, biped_spines_bones: List['_BipedBone']):
+        """첫 spine의 위치를 맞춘다
+        
+        Notes:
+            biped가 엉망이라서 다음의 순서를 지켜야 한다.
+                spine의 경우는 위치를 맞추는게 피규어 모드를 켰을 때만 가능하다.
+                그러므로 먼저 피규어 모드를 켜야하지만
+                피규어 모드를 키면 또 com의 위치가 이상한 곳으로 튀어 버린다.
+                그래서 반드시 com의 위치도 피규어 모드를 키고 변경해야 한다.
+                그러면 피규어 모드를 키더라도 com의 위치는 변경이 되지 않는다.
+        """
+        first_fbx_bone = ncm.dummy('spine_01')
+        biped_spines_bones[0].world_t = first_fbx_bone.world_t
+
+
+class _PelvisBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name == 'Pelvis'
+
+    def _execute_match(self):
+        """pelvis 크기 설정
+
+        Notes:
+            여기서 사이즈 조절을 해주는 것은 오로지 thigh의 위치를 맞추기 위한 
+            이유 이다. pelvis를 가로로 늘려서 biped의 thigh의 위치를 맞추는 것이다.
+        """
+        self._match_size()
+
+    def _match_size(self):
+        thigh_l = ncm.get_node_by_name('thigh_l')
+        thigh_r = ncm.get_node_by_name('thigh_r')
+        thigh_gap = thigh_l.transform.position.x - thigh_r.transform.position.x
+        scale = rt.Point3(thigh_gap, thigh_gap, thigh_gap)
+        rt.biped.setTransform(self.bone.node, rt.Name('scale'), scale, False)
+
+
+class _PelvisBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name == 'Pelvis'
+
+    def _execute_match(self):
+        """pelvis 위치는 com의 위치로 결정한다."""
+        pass
+
+
+class _ClavicleBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name == 'Clavicle' and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        fbx_bone = ncm.dummy('clavicle_l')
+        self.bone.world_t = fbx_bone.world_t
+        self._match_to_scale(fbx_bone)
+
+    def _match_to_scale(self, fbx_bone: '_BipedBone'):
+        child = ncm.dummy(fbx_bone.children[0])
+        bone_length = np.linalg.norm(fbx_bone.world_t - child.world_t)
+        self.bone.size = bone_length
+
+
+class _ClavicleBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name == 'Clavicle' and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        fbx_bone = ncm.dummy('clavicle_l')
+        self._match_to_position(fbx_bone)
+        self._match_to_rotation(fbx_bone)
+
+    def _match_to_position(self, fbx_bone: '_BipedBone'):
+        """어깨의 위치는 figure mode를 켜야한 가능하다"""
+        self.biped.figure_mode = True
+        mat = fbx_bone.world_mat
+        self.bone.world_t = mat.pos
+        self.biped.figure_mode = False
+
+    def _match_to_rotation(self, fbx_bone: '_BipedBone'):
+        """회전을 fbx bone과 일치 시킨다."""
+        self.bone.world_r = fbx_bone.world_r
+        self._finetune_rotation(fbx_bone)
+
+    def _finetune_rotation(self, fbx_bone):
+        child_fbx_bone = ncm.dummy(fbx_bone.children[0])
+        angle = ncm.get_angle_between_position_to_axis_on_plane(self.bone.name,
+                                                                axis='x', plane='xy',
+                                                                target_position=child_fbx_bone.world_t)
+        dum = ncm.dummy('match_guide_dum')
+        dum.world_mat = fbx_bone.world_mat
+        grp = dum.make_grp()
+        dum.rz += angle
+        self.bone.world_r = dum.world_r
+        grp.delete()
+        dum.delete()
+
+
+class _UpperArmBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
+    """상박 매칭"""
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name in ['UpperArm'] and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        self.bone.size = self._get_fbx_bone_length(ncm.dummy('upperarm_l'))
+
+
+class _UpperArmBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+    """"""
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name in ['UpperArm'] and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        fbx_bone = ncm.dummy('upperarm_l')
+        self.bone.world_r = fbx_bone.world_r
+
+        hand_fbx_bone = ncm.dummy('hand_l')
+        angle = ncm.get_angle_between_position_to_axis_on_plane(self.bone.name,
+                                                                'y', 'yz',
+                                                                hand_fbx_bone.world_t)
+        self.bone.rx += (angle - 180)
+
+
+class _ForearmBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
+    """허벅지 매칭
+
+    단순하게 fbx 뼈와 matrix 상의 매칭을 한다. 이후 스케일을 조절
+    """
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name in ['Forearm'] and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        self.bone.size = self._get_fbx_bone_length(ncm.dummy('lowerarm_l'))
+
+
+class _ForearmBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+    """허벅지 매칭
+
+    단순하게 fbx 뼈와 matrix 상의 매칭을 한다. 이후 스케일을 조절
+    """
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name in ['Forearm'] and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        """
+        
+        Notes:
+            설명
+                먼저 팔을 쭉 핀다음 (팔꿈치가 일자가 되게)
+                fbx bone들의 각도만큼 구부려 준다.
+        """
+        parent_bone = self.biped.bones[self.bone.parent]
+        self.bone.world_r = parent_bone.world_r
+
+        fbx_bone_1 = ncm.dummy('upperarm_l')
+        fbx_bone_2 = ncm.dummy('lowerarm_l')
+        fbx_bone_3 = ncm.dummy('hand_l')
+
+        angle = ncm.get_angle_between_vectors(fbx_bone_1.world_t - fbx_bone_2.world_t,
+                                              fbx_bone_3.world_t - fbx_bone_2.world_t)
+        self.bone.rz += (180 - angle)
+
+
+class _HandBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name in ['Hand'] and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        """scale은 필요없다
+        
+        손의 metacarpal의 경우에는 피규어 모드에서 위치로 세팅하므로 
+        여기서 scale로 손가락들의 위치를 맞추는 일은 없다.
+        """
+        pass
+
+
+class _HandBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+    """허벅지 매칭
+
+    단순하게 fbx 뼈와 matrix 상의 매칭을 한다. 이후 스케일을 조절
+    """
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name in ['Hand'] and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        """
+
+        Notes:
+            설명
+                먼저 팔을 쭉 핀다음 (팔꿈치가 일자가 되게)
+                fbx bone들의 각도만큼 구부려 준다.
+        """
+        fbx_bone = ncm.dummy('hand_l')
+        self.bone.world_r = fbx_bone.world_r
+
+
+class _MetacarpalBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name in ['Finger0',
+                                       'Finger1',
+                                       'Finger2',
+                                       'Finger3',
+                                       'Finger4'] and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        """"""
+        fbx_bone = ncm.dummy(self.preset_fbx_bone_name)
+        self.bone.size = self._get_fbx_bone_length(fbx_bone)
+
+
+class _MetacarpalBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+    """허벅지 매칭
+
+    단순하게 fbx 뼈와 matrix 상의 매칭을 한다. 이후 스케일을 조절
+    """
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name in ['Finger0',
+                                       'Finger1',
+                                       'Finger2',
+                                       'Finger3',
+                                       'Finger4'] and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        """
+
+        Notes:
+            설명
+                먼저 팔을 쭉 핀다음 (팔꿈치가 일자가 되게)
+                fbx bone들의 각도만큼 구부려 준다.
+        """
+        self.biped.figure_mode = True
+        hand_fbx_bone = ncm.dummy('hand_l')
+        fbx_bone = ncm.dummy(self.preset_fbx_bone_name)
+        local_mat = fbx_bone.world_mat * rt.Inverse(hand_fbx_bone.world_mat)
+
+        hand_bone = self.biped.bones['Bip001 L Hand']
+        mat = local_mat * hand_bone.world_mat
+
+        self.bone.world_t = mat.pos
+        self.biped.figure_mode = False
+        self.bone.world_r = fbx_bone.world_r
+
+
+class _FingersBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        return 'Finger' in self.bone.pure_name and \
+               len(self.bone.pure_name) > 7 and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        """fbx import 할때 손끝이 빠져있는 경우가 있다"""
+        fbx_bone = ncm.dummy(self.preset_fbx_bone_name)
+        if fbx_bone.children:
+            self.bone.size = self._get_fbx_bone_length(fbx_bone)
+        else:
+            self.bone.size = self._get_fbx_bone_length(ncm.dummy(fbx_bone.parent)) * 0.9
+
+
+class _FingersBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+    """허벅지 매칭
+
+    단순하게 fbx 뼈와 matrix 상의 매칭을 한다. 이후 스케일을 조절
+    """
+
+    @property
+    def is_matched(self):
+        return 'Finger' in self.bone.pure_name and \
+               len(self.bone.pure_name) > 7 and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        """
+
+        Notes:
+            설명
+                먼저 팔을 쭉 핀다음 (팔꿈치가 일자가 되게)
+                fbx bone들의 각도만큼 구부려 준다.
+        """
+        fbx_bone = ncm.dummy(self.preset_fbx_bone_name)
+        self.bone.world_r = fbx_bone.world_r
+
+
+class _NeckBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
+
+    @property
+    def is_matched(self):
+        return 'Neck' in self.bone.pure_name
+
+    def _execute_match(self):
+        """fbx import 할때 손끝이 빠져있는 경우가 있다"""
+        fbx_bone = ncm.dummy(self.preset_fbx_bone_name)
+        self.bone.size = self._get_fbx_bone_length(fbx_bone)
+
+
+class _NeckBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+    """허벅지 매칭
+
+    단순하게 fbx 뼈와 matrix 상의 매칭을 한다. 이후 스케일을 조절
+    """
+
+    @property
+    def is_matched(self):
+        return 'Neck' in self.bone.pure_name
+
+    def _execute_match(self):
+        """
+
+        Notes:
+            위치 이동이 figure mode를 켜야만 가능하다.
+        """
+        fbx_bone = ncm.dummy(self.preset_fbx_bone_name)
+        self.biped.figure_mode = True
+        self.bone.world_t = fbx_bone.world_t
+        self.biped.figure_mode = False
+        self.bone.world_r = fbx_bone.world_r
+        if self.bone.pure_name == 'Neck':
+            self.bone.rx = 180
+        elif self.bone.pure_name == 'Neck1':
+            self.bone.rx = 0
+        else:
+            raise ValueError(f"Unknown neck bone name: {self.bone.pure_name}")
+
+
+class _HeadBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
 
     @property
     def is_matched(self):
@@ -176,121 +774,101 @@ class _HeadBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
         pass
 
 
-# class _ToeBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
-# 
-#     @property
-#     def is_matched(self):
-#         return self.bone.pure_name == 'Toe'
-# 
-#     def _execute_match(self):
-#         pass
+class _HeadBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+    """허벅지 매칭
 
-
-class _SpineBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
-
-    @property
-    def is_matched(self):
-        return self.bone.pure_name == 'Spine'
-
-    def _execute_match(self):
-        pass
-
-
-class _FingerBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
-
-    @property
-    def is_matched(self):
-        return 'Finger' in self.bone.pure_name
-
-    def _execute_match(self):
-        pass
-
-
-# 
-# class _FootBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
-# 
-#     @property
-#     def is_matched(self):
-#         return 'Foot' == self.bone.pure_name
-# 
-#     def _execute_match(self):
-#         fbx_bone_name = self.bone.pure_name.lower()
-#         if self.bone.drt == 'L':
-#             fbx_bone = ncm.dummy(fbx_bone_name + '_l')
-#         else:
-#             fbx_bone = ncm.dummy(fbx_bone_name + '_r')
-#         self.bone.world_t = fbx_bone.world_t
-
-
-class _PelvisBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
-
-    @property
-    def is_matched(self):
-        return 'Pelvis' in self.bone.pure_name
-
-    def _execute_match(self):
-        """pelvis 크기 설정
-
-        Notes:
-            여기서 사이즈 조절을 해주는 것은 오로지 thigh의 위치를 맞추기 위한 
-            이유 이다. pelvis를 가로로 늘려서 biped의 thigh의 위치를 맞추는 것이다.
-        """
-        thigh_l = ncm.get_object_by_name('thigh_l')
-        thigh_r = ncm.get_object_by_name('thigh_r')
-
-        thigh_gap = thigh_l.transform.position.x - thigh_r.transform.position.x
-        scale = rt.Point3(thigh_gap, thigh_gap, thigh_gap)
-        rt.biped.setTransform(self.bone.node, rt.Name('scale'), scale, False)
-
-
-class _NeckBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
-
-    @property
-    def is_matched(self):
-        return 'Neck' in self.bone.pure_name
-
-    def _execute_match(self):
-        pass
-
-
-class _ClavicleBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
-
-    @property
-    def is_matched(self):
-        return 'Clavicle' in self.bone.pure_name
-
-    def _execute_match(self):
-        pass
-
-
-class _ThighBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
-    """일반적인 뼈들을 fbx뼈로 매칭시킨다
-
-    _BipedBoneToFBXBoneMatcherBase.__subclasses__() 반복문을 돌때
-    설정되지 못한 bone들을 매칭시킨다.
+    단순하게 fbx 뼈와 matrix 상의 매칭을 한다. 이후 스케일을 조절
     """
 
     @property
     def is_matched(self):
-        return self.bone.pure_name in ['Thigh']
+        return self.bone.pure_name == 'Head'
+
+    def _execute_match(self):
+        """
+
+        Notes:
+            위치 이동이 figure mode를 켜야만 가능하다.
+        """
+        fbx_bone = ncm.dummy(self.preset_fbx_bone_name)
+        self.bone.world_r = fbx_bone.world_r
+        self.bone.rx = 180
+
+
+class _ThighBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
+    """허벅지 매칭
+
+    단순하게 fbx 뼈와 matrix 상의 매칭을 한다. 이후 스케일을 조절
+    """
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name in ['Thigh'] and self.bone.drt == 'L'
 
     def _execute_match(self):
         self._match_biped_bone(self.bone.pure_name.lower())
 
     def _match_biped_bone(self, fbx_bone_name: str):
-        if self.bone.drt == 'L':
-            fbx_bone = ncm.dummy(fbx_bone_name + '_l')
-        else:
-            fbx_bone = ncm.dummy(fbx_bone_name + '_r')
+        fbx_bone = ncm.dummy(fbx_bone_name + '_l')
+        if not ncm.exists_objects(fbx_bone.name):
+            raise ValueError(f"Cannot find fbx bone: {fbx_bone}")
+        self._match_size(fbx_bone)
+
+    def _match_size(self, fbx_bone: nodes._Dummy):
+        child_fbx_bone = ncm.dummy(fbx_bone.children[0])
+        bone_length = np.linalg.norm(fbx_bone.world_t - child_fbx_bone.world_t)
+        self.bone.size = bone_length
+
+
+class _ThighBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+    """허벅지 매칭
+
+    단순하게 fbx 뼈와 matrix 상의 매칭을 한다. 이후 스케일을 조절
+    """
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name in ['Thigh'] and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        self._match_biped_bone(self.bone.pure_name.lower())
+
+    def _match_biped_bone(self, fbx_bone_name: str):
+        fbx_bone = ncm.dummy(fbx_bone_name + '_l')
         if not ncm.exists_objects(fbx_bone.name):
             raise ValueError(f"Cannot find fbx bone: {fbx_bone}")
         self._match_rotation(fbx_bone)
         self._match_size(fbx_bone)
 
     def _match_rotation(self, fbx_bone: nodes._Dummy):
+        self._match_rotation_to_fbx_bone(fbx_bone)
+        self._set_rotation_y_to_foot_bone()
+
+    def _set_rotation_y_to_foot_bone(self):
+        """ry값을 조절한다.
+
+        fbx를 제작할때 다리가 1자가 아닌 경우가 있다.
+        biped는 무조건 다리가 일자인 것을 전제로만 작업을 할 수 있다.
+        그래서 허벅지를 ry방향으로(좌우로) 약간 회전시켜서 foot를 xy평면과 일치시켜야 한다.
+        일치 된 후 rz를 돌려주면 정확히 foot의 위치와 동일해 진다.
+        """
+        calf_bone = self.biped.bones['Bip001 L Calf']
+        foot_fbx = ncm.dummy('foot_l')
+
+        foot_ptn = ncm.get_point3(foot_fbx.world_t)
+        local_foot_ptn = foot_ptn * rt.Inverse(self.bone.world_mat)
+        local_foot_ptn.y = 0
+        world_foot_ptn = local_foot_ptn * self.bone.world_mat
+
+        vec_1 = calf_bone.world_t - self.bone.world_t
+        vec_2 = np.array([world_foot_ptn.x, world_foot_ptn.y, world_foot_ptn.z]) - self.bone.world_t
+        angle = ncm.get_angle_between_vectors(vec_1, vec_2)
+        self.bone.ry += angle
+
+    def _match_rotation_to_fbx_bone(self, fbx_bone):
+        """fbx 뼈와 일치 시킨다."""
         self.bone.world_r = fbx_bone.world_r
-        if self.bone.drt == 'L':
-            self.bone.rz = 180
+        self.bone.rz = 180
 
     def _match_size(self, fbx_bone: nodes._Dummy):
         child_fbx_bone = ncm.dummy(fbx_bone.children[0])
@@ -298,67 +876,21 @@ class _ThighBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
         self.bone.size = bone_length
 
 
-class _CalfBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
-    """일반적인 뼈들을 fbx뼈로 매칭시킨다
-    
-    _BipedBoneToFBXBoneMatcherBase.__subclasses__() 반복문을 돌때
-    설정되지 못한 bone들을 매칭시킨다.
+class _CalfBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
+    """종아리 매칭
+
+    크기만 매칭 시킨다
     """
 
     @property
     def is_matched(self):
-        return self.bone.pure_name in ['Calf']
+        return self.bone.pure_name == 'Calf' and self.bone.drt == 'L'
 
     def _execute_match(self):
-        self._match_biped_bone(self.bone.pure_name.lower())
-
-    def _match_biped_bone(self, fbx_bone_name: str):
-        if self.bone.drt == 'L':
-            fbx_bone = ncm.dummy(fbx_bone_name + '_l')
-        else:
-            fbx_bone = ncm.dummy(fbx_bone_name + '_r')
+        fbx_bone = ncm.dummy(self.bone.pure_name.lower() + '_l')
         if not ncm.exists_objects(fbx_bone.name):
             raise ValueError(f"Cannot find fbx bone: {fbx_bone}")
         self._match_size(fbx_bone)
-        self._rotate_calf(fbx_bone)
-        # self._adjust_rotation(fbx_bone)
-
-    # def _adjust_rotation(self, fbx_bone: nodes._Dummy):
-    #     """로테이션을 보정한다.
-    #     
-    #     이유는 모르겠는데 에러가 나서 그걸 보정한다.
-    #         피규어 모드가 켜져있는 상태에서 스크립트로 회전을 주고 난 다음에 피규어 모드를 끄게 될것이다.
-    #         그러면 parent coordinate system을 기준으로 약간의 회전값들이 들어가 있다.
-    #         피규어 모드를 끈 상태에서 parent coordinate system상의 rotation을 모두 0, 0, 0으로 만들면
-    #         원하는 모양이 되기는 한다. 그래서 그 정도의 값을 보정해 준다. 되려나  
-    #     """
-    #     parent_node = self.bone.node.parent
-    #     rot = (self.bone.node.transform * rt.Inverse(parent_node.transform)).rotation
-    #     rz = rt.QuatToEuler(rot).z
-    #     self.bone.rz -= rz
-
-    def _rotate_calf(self, fbx_bone: nodes._Dummy):
-        """calf의 rotation을 조절한다
-        
-        원래 계획은
-            thigh의 회전과 크기를 맞춘다 -> calf의 크기를 맞춘다 -> foot의 위치를 맞춘다.
-            
-        이었는데 foot의 위치를 바꾸는 순간 무릎의 위치가 엇나가게 된다.
-        그러므로 다음과 같이 순서를 수정하였다.
-            thigh의 회전과 크기를 맞춘다 -> calf의 축 하나만 돌려서 foot의 위치를 맞춘다
-            
-        이 방법으로 하려면 vector로 각도를 구해야 한다.
-        """
-        if self.bone.drt == 'L':
-            biped_foot = self.biped.bones[f'{self.biped.name} L Foot']
-            fbx_foot = ncm.dummy('foot_l')
-        else:
-            biped_foot = self.biped.bones[f'{self.biped.name} R Foot']
-            fbx_foot = ncm.dummy('foot_r')
-        vec_1 = fbx_bone.world_t - fbx_foot.world_t
-        vec_2 = fbx_bone.world_t - biped_foot.world_t
-        angle = ncm.get_angle_between_vectors(vec_1, vec_2)
-        self.bone.rz += angle
 
     def _match_size(self, fbx_bone: nodes._Dummy):
         child_fbx_bone = ncm.dummy(fbx_bone.children[0])
@@ -366,7 +898,65 @@ class _CalfBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
         self.bone.size = bone_length
 
 
-class _NotSetYetBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
+class _CalfBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+    """종아리 매칭"""
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name == 'Calf' and self.bone.drt == 'L'
+
+    def _execute_match(self):
+        fbx_bone = ncm.dummy(self.bone.pure_name.lower() + '_l')
+        if not ncm.exists_objects(fbx_bone.name):
+            raise ValueError(f"Cannot find fbx bone: {fbx_bone}")
+        self._match_rotation()
+
+    def _match_rotation(self):
+        foot_fbx = ncm.dummy('foot_l')
+        angle = ncm.get_angle_between_position_to_axis_on_plane(self.bone.name,
+                                                                'x', 'xy', foot_fbx.world_t)
+        self.bone.rz += angle
+
+
+class _CommonBoneAttributes:
+    bone = None
+    biped = None
+
+    def _is_matched(self):
+        return self.bone.pure_name in [] and self.bone.drt == 'L'
+
+    def _get_fbx_bone(self):
+        fbx_bone_name = getattr(self.biped.bone_preset, self.bone.pure_name).fbx_bone
+        return ncm.dummy(fbx_bone_name + '_l')
+
+
+class _CommonBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase, _CommonBoneAttributes):
+    """일반적인 경우의 뼈들"""
+
+    @property
+    def is_matched(self):
+        return self._is_matched()
+
+    def _execute_match(self):
+        """자식과의 거리로 크기를 맞춘다."""
+        fbx_bone = self._get_fbx_bone()
+        fbx_bone_len = self._get_fbx_bone_length(fbx_bone)
+        self.bone.size = fbx_bone_len
+
+
+class _CommonBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase, _CommonBoneAttributes):
+    """일반적인 뼈 매칭"""
+
+    @property
+    def is_matched(self):
+        return self._is_matched()
+
+    def _execute_match(self):
+        fbx_bone = self._get_fbx_bone()
+        self.bone.world_r = fbx_bone.world_r
+
+
+class _NotSetYetBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
     """아직 설정하지 않은 bone들
     """
 
@@ -375,7 +965,47 @@ class _NotSetYetBoneToFBXBoneMatcher(_BipedBoneToFBXBoneMatcherBase):
         return True
 
     def _execute_match(self):
-        print(f"Not set yet: {self.bone.name}")
+        print(f"Not set scale yet: {self.bone.name}")
+
+
+class _NotSetYetBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
+    """아직 설정하지 않은 bone들
+    """
+
+    def __call__(self):
+        self._execute_match()
+
+    def _execute_match(self):
+        print(f"Not set pose yet: {self.bone.name}")
+
+    @property
+    def is_matched(self):
+        return True
+
+
+class _BipedBoneMirror:
+    """이거를 하면 발목만 빼고는 모두 mirror가 잘 된다.
+    
+    피규어 모드를 키고 꺼가면서 거의 꼼수로 하는 것이긴 하지만.
+    하지만 어쨌든 발목의 문제가 계속 해결이 안되서 결국에는 mirror를 하지 못하여 
+    양쪽 모두를 직접 조절하는 방식으로 진행하였다. 그래서 이 구문은 백업차원에서 남겨놓는다. 
+    """
+    def __init__(self, biped: '_Biped'):
+        self.biped = biped
+
+    def __call__(self):
+        ptn = self.biped.bones[0].world_t
+        collection_name = 'left_bones'
+        left_bones = self.biped.bones.find_bones_by_direction('L')
+        ctrl = left_bones[0].node.controller
+        collection = rt.biped.createCopyCollection(ctrl, collection_name)
+        pos = rt.biped.copyBipPosture(ctrl, collection, [bone.node for bone in left_bones], rt.Name('snapNone'))
+        rt.biped.pasteBipPosture(ctrl, pos, True, rt.Name('pstdefault'), False, False, False, True)
+        self.biped.figure_mode = True
+        rt.biped.pasteBipPosture(ctrl, pos, True, rt.Name('pstdefault'), False, False, False, True)
+        self.biped.figure_mode = False
+        rt.biped.pasteBipPosture(ctrl, pos, False, rt.Name('pstdefault'), False, False, False, True)
+        self.biped.bones[0].world_t = ptn
 
 
 class _BipedBone(nodes._Object):
@@ -395,7 +1025,12 @@ class _BipedBone(nodes._Object):
         super(_BipedBone, self).__init__(name)
         self.bones = bones
         self._set_match_guide()
-        self._set_match_to_fbx_bone()
+        self._set_match_scale_to_fbx_bone()
+        self._set_match_pose_to_fbx_bone()
+
+    @property
+    def is_com(self):
+        return len(self.name.split(' ')) == 1
 
     @property
     def rx(self):
@@ -423,12 +1058,13 @@ class _BipedBone(nodes._Object):
 
     @property
     def r(self):
-        return self.node.rotation
+        rot = rt.QuatToEuler(self.node.transform.rotation)
+        return np.array([rot.x, rot.y, rot.z])
 
     @r.setter
     def r(self, value):
         world_rot_mat = rt.Matrix3(1)
-        world_rot_mat.rotation = self.world_r
+        world_rot_mat.rotation = rt.EulerAngles(float(self.world_r[0]), float(self.world_r[1]), float(self.world_r[2]))
         local_rot_mat = rt.Matrix3(1)
         local_rot_mat.rotation = rt.EulerToQuat(rt.EulerAngles(float(value[0]),
                                                                float(value[1]),
@@ -445,12 +1081,15 @@ class _BipedBone(nodes._Object):
         if isinstance(value, (np.ndarray, tuple, list)):
             ptn = rt.Point3(float(value[0]), float(value[1]), float(value[2]))
             rt.biped.setTransform(self.node, rt.Name('pos'), ptn, False)
+        elif isinstance(value, type(rt.Point3)):
+            rt.biped.setTransform(self.node, rt.Name('pos'), value, False)
         else:
             raise ValueError(type(value))
 
     @property
     def world_r(self):
-        return self.node.transform.rotation
+        rot = rt.QuatToEuler(self.node.transform.rotation)
+        return np.array([rot.x, rot.y, rot.z])
 
     @world_r.setter
     def world_r(self, value):
@@ -458,14 +1097,25 @@ class _BipedBone(nodes._Object):
         if isinstance(value, (np.ndarray, tuple, list)):
             rot = rt.EulerToQuat(rt.EulerAngles(float(value[0]), float(value[1]), float(value[2])))
             rt.biped.setTransform(self.node, rt.Name('rotation'), rot, False)
-        elif isinstance(value, rt.Rotation):
+        elif isinstance(value, type(rt.Rotation)):
             rt.biped.setTransform(self.node, rt.Name('rotation'), value, False)
         else:
             raise ValueError(type(value))
 
     @property
+    def world_mat(self):
+        return self.node.transform
+
+    @world_mat.setter
+    def world_mat(self, value):
+        """scale이 적용이 잘 되려나"""
+        rt.biped.setTransform(self.node, rt.Name('pos'), value.position, False)
+        rt.biped.setTransform(self.node, rt.Name('rotation'), value.rotation, False)
+        rt.biped.setTransform(self.node, rt.Name('scale'), value.scale, False)
+
+    @property
     def size(self):
-        return
+        return rt.biped.getTransform(self.node, rt.Name('scale'))
 
     @size.setter
     def size(self, value):
@@ -493,7 +1143,10 @@ class _BipedBone(nodes._Object):
     @property
     def drt(self):
         splits = self.name.split(' ')
-        return splits[1]
+        if len(splits) == 3:
+            return splits[1]
+        else:
+            return None
 
     @property
     def pure_name(self):
@@ -524,11 +1177,20 @@ class _BipedBone(nodes._Object):
     def make(self, name: str):
         pass
 
-    def _set_match_to_fbx_bone(self):
-        for sub_cls in _BipedBoneToFBXBoneMatcherBase.__subclasses__():
+    def _set_match_scale_to_fbx_bone(self):
+        for sub_cls in _BipedBoneScaleToFBXBoneMatcherBase.__subclasses__():
             ins = sub_cls(self)
             if ins.is_matched:
-                self.match_to_fbx_bone = ins
+                self.match_scale_to_fbx_bone = ins
+                return
+        else:
+            raise NotImplementedError(f"Cannot find match to fbx bone: {self.name}")
+
+    def _set_match_pose_to_fbx_bone(self):
+        for sub_cls in _BipedBonePoseToFBXBoneMatcherBase.__subclasses__():
+            ins = sub_cls(self)
+            if ins.is_matched:
+                self.match_pose_to_fbx_bone = ins
                 return
         else:
             raise NotImplementedError(f"Cannot find match to fbx bone: {self.name}")
@@ -718,10 +1380,22 @@ class _BipedBones(Sequence[_BipedBone]):
             self._add_children(bones, bone.name)
         return bones
 
+    def find_bones_by_direction(self, direction: str = 'L'):
+        """방향에 해당하는 bone들을 반환한다."""
+        return [bone
+                for bone in self._bones
+                if bone.drt == direction]
+
+    def find_bones_by_pure_name(self, name: str):
+        """pure 이름에 해당 이름이 들어있는 bone들을 반환한다."""
+        return [bone
+                for bone in self._bones
+                if name in bone.pure_name]
+
     def _add_children(self, bones, bone_name: str):
         bone_node = ncm.node(bone_name)
         for child in bone_node.children:
-            child_node = ncm.get_object_by_name(child)
+            child_node = ncm.get_node_by_name(child)
             if rt.ClassOf(child_node) == rt.Dummy:
                 continue
             elif 'Footsteps' in child:
@@ -731,23 +1405,6 @@ class _BipedBones(Sequence[_BipedBone]):
                 bones.append(bone)
                 if len(child_node.children) > 0:
                     self._add_children(bones, child_node.name)
-
-
-class _BipedBoneToFBXBoneMatcher:
-    def __init__(self, biped: '_Biped'):
-        self.biped = biped
-        self.match_com_to_fbx_bone = _ComToFBXBoneMatcher()
-        self.match_com_to_fbx_bone = _ComToFBXBoneMatcher()
-
-    def __call__(self, char: '_FBXCharacter'):
-        if not char.exists:
-            print(f"Character does not exist: {char}")
-            return
-        self.char = char
-        self.figure_mode = True
-        self.match_com_to_fbx_bone()
-
-        self.figure_mode = False
 
 
 class _Biped:
@@ -762,11 +1419,11 @@ class _Biped:
         self._make_preset = None
         self._bone_preset = None
         if ncm.exists_objects(name):
-            self.node = ncm.get_object_by_name(name)
+            self.node = ncm.get_node_by_name(name)
         else:
             self.node = None  # biped node
         self.bones = _BipedBones(self)
-        self.match_to_fbx_character = _BipedBoneToFBXBoneMatcher(self)
+        self._mirror_bones = _BipedBoneMirror(self)
 
     @property
     def name(self):
@@ -824,7 +1481,7 @@ class _Biped:
     def delete(self):
         ncm.delete(self.name)
 
-    def make(self, preset: '_BipedMakePresetBase' = None, make_match_guide=True):
+    def make(self, preset: '_BipedMakePresetBase' = None, make_match_guide=False):
         """실제 씬에 biped를 생성한다.
 
         Args:
@@ -848,23 +1505,38 @@ class _Biped:
                                        fingerLinks=self.make_preset.finger_joint_count,
                                        knuckles=self.make_preset.metacarpal,
                                        shortThumb=self.make_preset.reduce_thumb_count,
-                                       toeLinks=self.make_preset.toe_joint_count)
+                                       toeLinks=self.make_preset.toe_joint_count,
+                                       triangleNeck=self.make_preset.triangle_neck)
         self._name = self.node.name
 
         if make_match_guide:
             self._make_match_guides()
 
     def match_to_fbx_character(self, char: '_FBXCharacter'):
+        """fbx 캐릭터에 맞춘다
+        
+        Notes:
+            t, r을 맞추는 pose와 size를 맞추는 스케일은 각각 따로 작업을 해야 한다.
+            setTransform으로 scale을 변경하면 다른 bone들의 스케일까지 영향을 준다.. 
+            아주 욕나오게 이상한 구조를 가지고 있다.
+        """
         if not char.exists:
             print(f"Character does not exist: {char}")
             return
         self.char = char
+        self._match_scale_to_fbx_character()
+        self._match_pose_to_fbx_character()
+        self._mirror_bones()
+
+    def _match_scale_to_fbx_character(self):
         self.figure_mode = True
         for bone in self.bones:
-            bone.match_to_fbx_bone()
-            if bone.name == 'Bip001 R Calf':
-                break
-        # self.figure_mode = False
+            bone.match_scale_to_fbx_bone()
+        self.figure_mode = False
+
+    def _match_pose_to_fbx_character(self):
+        for bone in self.bones:
+            bone.match_pose_to_fbx_bone()
 
     def _make_match_guides(self):
         """biped의 위치를 수정할 때 사용할 match guide들도 같이 만든다.
@@ -918,8 +1590,8 @@ class _BipedBoneToFBXBoneMatchGuideBase(ABC):
         dummy.name = self.name
 
     def _get_spine_gab(self):
-        clavicle_tz = ncm.get_object_by_name('clavicle_l').transform.position.z
-        spine_1_tz = ncm.get_object_by_name('spine_01').transform.position.z
+        clavicle_tz = ncm.get_node_by_name('clavicle_l').transform.position.z
+        spine_1_tz = ncm.get_node_by_name('spine_01').transform.position.z
         return (clavicle_tz - spine_1_tz) / 3
 
 
@@ -934,9 +1606,9 @@ class _Spine1BipedBoneToFBXBoneMatchGuide(_BipedBoneToFBXBoneMatchGuideBase):
         return self.bone.pure_name == 'Spine1'
 
     def _set_position(self):
-        spine_1_tz = ncm.get_object_by_name('spine_01').transform.position.z
+        spine_1_tz = ncm.get_node_by_name('spine_01').transform.position.z
         ptn = rt.Point3(0, 0, spine_1_tz + self._get_spine_gab())
-        ncm.get_object_by_name(self.name).position = ptn
+        ncm.get_node_by_name(self.name).position = ptn
 
 
 class _Spine2BipedBoneToFBXBoneMatchGuide(_BipedBoneToFBXBoneMatchGuideBase):
@@ -950,9 +1622,9 @@ class _Spine2BipedBoneToFBXBoneMatchGuide(_BipedBoneToFBXBoneMatchGuideBase):
         return self.bone.pure_name == 'Spine2'
 
     def _set_position(self):
-        spine_1_tz = ncm.get_object_by_name('spine_01').transform.position.z
+        spine_1_tz = ncm.get_node_by_name('spine_01').transform.position.z
         ptn = rt.Point3(0, 0, spine_1_tz + self._get_spine_gab() * 2)
-        ncm.get_object_by_name(self.name).position = ptn
+        ncm.get_node_by_name(self.name).position = ptn
 
 
 class _UnavailableBipedBoneToFBXBoneMatchGuide(_BipedBoneToFBXBoneMatchGuideBase):
