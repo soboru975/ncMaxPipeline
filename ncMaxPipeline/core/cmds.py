@@ -39,6 +39,11 @@ def open_file(path: str = None):
         print(f"File does not exist: {path}")
         return
     rt.LoadMaxFile(path)
+    try:
+        rt.Execute("viewport.activeViewport = 4")
+        rt.Execute("max tool maximize")
+    except:
+        pass
 
 
 def get_angle_between_vectors(vec1: np.ndarray, vec2: np.ndarray):
@@ -123,8 +128,36 @@ def get_angle_between_position_to_axis_on_plane(node_name: str, axis: str, plane
 
     vec_1 = world_ptn - orig_ptn
     vec_2 = world_tgt_ptn - orig_ptn
-    return get_angle_between_vectors(to_numpy(vec_1), to_numpy(vec_2))
+    angle = get_angle_between_vectors(to_numpy(vec_1), to_numpy(vec_2))
 
+    local_position = get_point3(target_position) * rt.Inverse(world_mat)
+    if axis == 'x':
+        if plane == 'xy':
+            if local_position.y < 0:
+                return -angle
+            else:
+                return angle
+        elif plane == 'xz':
+            if local_position.z < 0:
+                return angle
+            else:
+                return -angle
+        else:
+            raise NotImplementedError(axis, plane)
+    elif axis == 'y':
+        if plane == 'yz':
+            if local_position.z < 0:
+                return -angle
+            else:
+                return angle
+        else:
+            raise NotImplementedError(axis, plane)
+    else:
+        raise NotImplementedError(axis, plane)
+
+
+def get_current_frame():
+    return rt.currentTime
 
 def get_point3(value):
     """입력한 값을 max의 point3으로 변환해 준다."""
@@ -181,7 +214,7 @@ def delete(names):
             rt.delete(get_node_by_name(name))
 
 
-def get_type_of_object(name: str):
+def get_class_of_object(name: str):
     """노드의 type을 받는다.
     
     Examples:
@@ -260,6 +293,22 @@ def get_node_by_name(name: str):
     return rt.getNodeByName(name)
 
 
+def hwano():
+    print('hwano121212')
+
+
+def link_constraint(source: str, target: str):
+    """source를 target에 링크한다."""
+    if not exists_objects([source, target]):
+        print(f"Node does not exist: {source}, {target}")
+        return
+    const = rt.Link_Constraint()
+    old_transform = get_node_by_name(source).transform
+    get_node_by_name(source).controller = const
+    const.constraints.addTarget(get_node_by_name(target), 0.0)
+    get_node_by_name(source).transform = old_transform
+
+
 def get_bound_meshes_by_dummy(dummy: str) -> List[str]:
     """더미 이름을 넣으면 더미가 바인딩된 메쉬를 찾는다"""
     meshes = []
@@ -303,7 +352,90 @@ def get_influences(mesh: str) -> List[str]:
     return [bone.name for bone in rt.skinOps.GetBoneNodes(skin)]
 
 
+def set_auto_frame_range_for_animation_keys():
+    """애니메이션 키가 있는 프레임 범위로 프레임 범위를 설정한다."""
+    min_frame, max_frame = get_animation_range()
+    rt.animationRange = rt.interval(min_frame, max_frame)
+
+
+def transfer(source: str, target: str):
+    """source의 transform을 target에 적용한다."""
+    if not exists_objects([source, target]):
+        print(f"Node does not exist: {source}, {target}")
+        return
+    source_node = get_node_by_name(source)
+    target_node = get_node_by_name(target)
+    source_node.transform = target_node.transform
+
+
+def make_axis_tripod(node_names: List[str]):
+    """해당 노드에 axis를 볼수 있는 point를 하위에 임시로 만들어준다.
+    
+    맥스에는 선택하지 않으면 axis를 볼수 있는 방법이 없다.
+    있을지도 모르겠지만 현재는 알 수가 없어서 그냥 point를 이용하여
+    axis tripod를 켜서 대용으로 쓰려고 한다.
+    """
+    name_suffix = '_AXIS_TRIPOD'
+
+    node_names = [node_names] if isinstance(node_names, str) else node_names
+    for node_name in node_names:
+        point = ncm.point(node_name + name_suffix)
+        transfer(point.name, node_name)
+        point.parent = node_name
+        point.axis_tripod = True
+        point.cross = False
+        point.size = 10
+
+
+def delete_axis_tripod(node_names: List[str]):
+    """axis를 볼수 있는 point들을 삭제한다
+    
+    맥스에는 선택하지 않으면 axis를 볼수 있는 방법이 없다.
+    있을지도 모르겠지만 현재는 알 수가 없어서 그냥 point를 이용하여
+    axis tripod를 켜서 대용으로 쓰려고 한다.
+    """
+    name_suffix = '_AXIS_TRIPOD'
+    node_names = [node_names] if isinstance(node_names, str) else node_names
+    for node_name in node_names:
+        if exists_objects(node_name + name_suffix):
+            delete(node_name + name_suffix)
+
+
+def get_selected_node_names():
+    """선택된 노드들의 이름을 반환한다."""
+    return [node.name for node in rt.selection]
+
+
+def get_animation_range():
+    """애니메이션 키가 있는 프레임 범위를 찾는다."""
+    min_frame = None
+    max_frame = None
+
+    for node in rt.objects:
+        pos_ctrl = rt.getPropertyController(node.controller, 'Position')
+        rot_ctrl = rt.getPropertyController(node.controller, 'Rotation')
+        scale_ctrl = rt.getPropertyController(node.controller, 'Scale')
+
+        for ctrl in [pos_ctrl, rot_ctrl, scale_ctrl]:
+            if rt.ClassOf(ctrl) != rt.UndefinedClass:
+                key_count = rt.NumKeys(ctrl)
+                if key_count > 0:
+                    min_f = int(rt.getKeyTime(ctrl, 1))
+                    max_f = int(rt.getKeyTime(ctrl, key_count))
+                    if min_frame is None or min_f < min_frame:
+                        min_frame = min_f
+
+                    if max_frame is None or max_f > max_frame:
+                        max_frame = max_f
+
+    if min_frame is not None and max_frame is not None:
+        return min_frame, max_frame
+    else:
+        return "No animation keys found."
+
+
 def unload_packages(print_result=False):
+    rt.ClearListener()
     packages = ['ncMaxPipeline', 'AL_BipedRetargeter', 'VCToolsManager']
     reload_list = []
     for i in sys.modules.keys():

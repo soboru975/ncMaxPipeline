@@ -14,6 +14,29 @@ def dummy(name: str):
     return _Dummy(name)
 
 
+def point(name: str):
+    return _Point(name)
+
+
+class _AttributeBase:
+    def __init__(self, attr_name):
+        self.attr_name = attr_name
+
+    def __get__(self, instance, owner):
+        return instance.node.__getattribute__(self.attr_name)
+
+    def __set__(self, instance, value):
+        setattr(instance.node, self.attr_name, value)
+
+
+class _FloatAttribute(_AttributeBase):
+    pass
+
+
+class _BoolAttribute(_AttributeBase):
+    pass
+
+
 class _Object(ABC):
     """
     그냥 node에 포함하면 되지 왜 이걸 굳이 나눴냐 궁금할 수 있다.
@@ -283,7 +306,7 @@ class _Node(_Object):
 
     @property
     def world_ty(self):
-        return self.node.position.y
+        return self.node.transform.position.y
 
     @world_ty.setter
     def world_ty(self, value):
@@ -292,7 +315,7 @@ class _Node(_Object):
 
     @property
     def world_tz(self):
-        return self.node.position.z
+        return self.node.transform.position.z
 
     @world_tz.setter
     def world_tz(self, value):
@@ -317,6 +340,11 @@ class _Node(_Object):
         if isinstance(value, (list, tuple, np.ndarray)):
             mat = rt.Matrix3(1)
             mat.rotation = rt.EulerToQuat(rt.EulerAngles(float(value[0]), float(value[1]), float(value[2])))
+            mat.position = rt.Point3(self.world_tx, self.world_ty, self.world_tz)
+            self.node.transform = mat
+        elif isinstance(value, type(rt.Rotation)):
+            mat = rt.Matrix3(1)
+            mat.rotation = value
             mat.position = rt.Point3(self.world_tx, self.world_ty, self.world_tz)
             self.node.transform = mat
         else:
@@ -408,6 +436,17 @@ class _Node(_Object):
     def world_mat(self, value):
         self.node.transform = value
 
+    @property
+    def axis_tripod(self):
+        return ncm.exists_objects(self.name + '_AXIS_TRIPOD')
+    
+    @axis_tripod.setter
+    def axis_tripod(self, value):
+        if value:
+            ncm.make_axis_tripod(self.name)
+        else:
+            ncm.delete_axis_tripod(self.name)
+
     def make(self, name: str):
         pass
 
@@ -416,10 +455,10 @@ class _Node(_Object):
         grp = ncm.dummy(self.name + '_' + group_name)
         grp.world_t = self.world_t
         grp.world_r = self.world_r
-        
+
         if self.parent is not None:
             grp.parent = self.parent
-        self.parent = grp.name 
+        self.parent = grp.name
         return grp
 
     def delete(self, with_children=False):
@@ -449,6 +488,36 @@ class _Bone(_Node):
 class _Dummy(_Node):
     def make(self, name: str):
         self.node = rt.Dummy()
+        self.node.name = name
+
+
+class _Point(_Node):
+    cross = _BoolAttribute('CROSS')
+    box = _BoolAttribute('BOX')
+    axis_tripod = _BoolAttribute('AXISTRIPOD')
+    center_marker = _BoolAttribute('CENTERMARKER')
+    size = _FloatAttribute('SIZE')
+    const_screen_size = _BoolAttribute('CONSTANTSCREENSIZE')
+    draw_on_top = _BoolAttribute('DRAWONTOP')
+
+    def __init__(self, name: str):
+        """point를 만들어준다.
+        
+        point의 경우 생성시 이전에 씬에 존재한 point의 속성들을 그대로 이어받는것 같다.
+        만약에 box가 켜져있으면 따로 설정을 안해도 똑같이 box가 켜지는거 같다.
+        난 그런게 싫어서 locator처럼 보이게 일관되게 생기도록하였다. 
+        """
+        super().__init__(name)
+        self.center_marker = False
+        self.axis_tripod = False
+        self.cross = True
+        self.box = False
+        self.size = 20
+        self.const_screen_size = False
+        self.draw_on_top = False
+
+    def make(self, name: str):
+        self.node = rt.Point()
         self.node.name = name
 
 
