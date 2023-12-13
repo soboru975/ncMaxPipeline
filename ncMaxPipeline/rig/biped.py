@@ -9,6 +9,7 @@ from pymxs import attime as at
 
 import ncMaxPipeline as ncm
 from ncMaxPipeline.rig import nodes
+from sympy import symbols, Eq, solve, sqrt
 
 
 def biped(name: str = 'Bip001'):
@@ -133,10 +134,7 @@ class _BipedBoneAnimationTransferBase(ABC):
     def __call__(self, start_frame: int, end_frame: int):
         self.start_frame = start_frame
         self.end_frame = end_frame
-
-        self._make_points()
         self._execute_match()
-        self._delete_points()
 
     @property
     @abstractmethod
@@ -146,6 +144,10 @@ class _BipedBoneAnimationTransferBase(ABC):
     @abstractmethod
     def _execute_match(self):
         pass
+
+    @property
+    def spine_transforms(self):
+        return self.biped.match_to_fbx_character.spine_transforms
 
     @property
     def biped(self):
@@ -160,14 +162,17 @@ class _BipedBoneAnimationTransferBase(ABC):
         self.fbx_point.delete()
 
 
-class _ComAnimationTransfer(_BipedBoneAnimationTransferBase):
+class _CommonAnimationTransfer(_BipedBoneAnimationTransferBase):
 
     @property
     def is_matched(self):
         return (self.biped.name == self.bone.name) or \
-               (self.bone.pure_name in ['Thigh', 'Calf', 'Foot', 'Toe0', 'Spine', 'Clavicle'])
+               (self.bone.pure_name in ['Thigh', 'Calf', 'Foot', 'Toe0', 'Clavicle', 'UpperArm', 'Forearm', 'Hand',
+                                        'Head']) or \
+               (any(name in self.bone.pure_name for name in ['Finger', 'Neck']))
 
     def _execute_match(self):
+        self._make_points()
         fbx_bone = ncm.dummy(self.bone.preset_fbx_bone_name)
 
         self.bone_point.node.transform = self.bone.node.transform
@@ -180,6 +185,27 @@ class _ComAnimationTransfer(_BipedBoneAnimationTransferBase):
             for f in range(self.start_frame, self.end_frame):
                 with at(f):
                     self.bone.node.transform = self.bone_point.node.transform
+        self._delete_points()
+
+
+class _SpinesAnimationTransfer(_BipedBoneAnimationTransferBase):
+
+    @property
+    def is_matched(self):
+        return self.bone.pure_name == 'Spine'
+
+    def _execute_match(self):
+        spine_bones = self.biped.bones.find_bones_by_pure_name('Spine')
+        with anim(True):
+            for f in range(self.start_frame, self.end_frame):
+                with at(f):
+                    self.spine_transforms.calculate(True)
+                    for i, spine_bone in enumerate(spine_bones):
+                        spine_bone.rx
+                        rt.biped.setTransform(spine_bone.node,
+                                              rt.Name('rotation'),
+                                              self.spine_transforms.rots[i],
+                                              True)
 
 
 class _NotSetYetBoneAnimationTrasfer(_BipedBoneAnimationTransferBase):
@@ -205,6 +231,14 @@ class _BipedBoneToFBXBoneMatcherBase(ABC):
     @abstractmethod
     def is_matched(self):
         pass
+
+    @property
+    def spine_transforms(self):
+        return self.biped.match_to_fbx_character.spine_transforms
+
+    @property
+    def is_bind_mode(self):
+        return self.biped.match_to_fbx_character.is_bind_mode
 
     @property
     def biped(self):
@@ -233,13 +267,12 @@ class _BipedBoneToFBXBoneMatcherBase(ABC):
             rt.biped.addNewKey(self.bone.node.controller.horizontal.controller, ncm.get_current_frame())
             rt.biped.addNewKey(self.bone.node.controller.turning.controller, ncm.get_current_frame())
         else:
-            rt.biped.setKey(self.bone.node, False, False, False)
-            # if self.bone.pure_name in ['Clavicle', 'UpperArm', 'Forearm', 'Hand', 'Head']:
-            #     rt.biped.setKey(self.bone.node, False, False, False)
-            # elif any(name in self.bone.pure_name for name in ['Finger', 'Neck']):
-            #     rt.biped.setKey(self.bone.node, False, False, False)
-            # else:
-            #     rt.biped.setSelectedKey(self.bone.node.controller)
+            if self.bone.pure_name in ['Clavicle', 'UpperArm', 'Forearm', 'Hand', 'Head']:
+                rt.biped.setKey(self.bone.node, True, True, True)
+            elif any(name in self.bone.pure_name for name in ['Finger', 'Neck']):
+                rt.biped.setKey(self.bone.node, True, True, True)
+            else:
+                rt.biped.setSelectedKey(self.bone.node.controller)
 
 
 class _BipedBoneScaleToFBXBoneMatcherBase(_BipedBoneToFBXBoneMatcherBase):
@@ -432,14 +465,13 @@ class _SpineBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
     @property
     def is_matched(self):
         """3개의 spine을 처음 spine 이름인 spine에서 전부 적용한다."""
-        return 'Spine' in self.bone.pure_name
+        return 'Spine' == self.bone.pure_name
 
     def _execute_match(self):
         """spine은 3개짜리로 가정하고 제작되었다."""
         biped_spines_bones = self.biped.bones.find_bones_by_pure_name('Spine')
-        whole_spine_length = self._get_whole_spine_length()
-
-        self._set_length_to_spines(biped_spines_bones, whole_spine_length)
+        for spine_bone in biped_spines_bones:
+            spine_bone.size = self.spine_transforms.size
         self._set_width_to_spines(biped_spines_bones)
 
     def _set_width_to_spines(self, biped_spines_bones):
@@ -449,26 +481,6 @@ class _SpineBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
         for bone in biped_spines_bones:
             scale = rt.Point3(old_scale.x, old_scale.y, pelvis_sz)
             rt.biped.setTransform(bone.node, rt.Name('scale'), scale, False)
-
-    def _set_length_to_spines(self, biped_spines_bones: List['_BipedBone'], whole_spine_length: float):
-        """spine들의 길이를 설정한다"""
-        old_scale = rt.biped.getTransform(biped_spines_bones[0].node, rt.Name('scale'))
-        old_spine_length = old_scale.x * 3
-        scale_ratio = whole_spine_length / old_spine_length
-        for bone in biped_spines_bones:
-            scale = rt.Point3(old_scale.x * scale_ratio, old_scale.y, old_scale.z)
-            rt.biped.setTransform(bone.node, rt.Name('scale'), scale, False)
-
-    def _get_whole_spine_length(self):
-        """spine 전체 길이를 반환한다
-
-        애니메이션팀에서 특정하게 원하는 길이가 디테일하게 없어서
-        대략적으로만 계산한다.
-        첫번째 spine에서 어깨까지의 직선 길이를 허리 길이로 한다.
-        """
-        first_fbx_bone_ptn = ncm.dummy('spine_01').world_t
-        shoulder_fbx_bones_ptn = (ncm.dummy('clavicle_l').world_t + ncm.dummy('clavicle_r').world_t) / 2
-        return float(np.linalg.norm(first_fbx_bone_ptn - shoulder_fbx_bones_ptn))
 
 
 class _SpineBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
@@ -488,21 +500,13 @@ class _SpineBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
         self.biped.figure_mode = False
 
     def _set_rotation_rx_to_spines(self, biped_spines_bones: List['_BipedBone']):
-        """애니메이션팀 요청으로 spine들이 척추를 따라 약간씩 회전하도록 한다."""
-        shoulder_fbx_bones_ptn = (ncm.dummy('clavicle_l').world_t + ncm.dummy('clavicle_r').world_t) / 2
-        angle_y = ncm.get_angle_between_position_to_axis_on_plane(biped_spines_bones[0].name,
-                                                                  axis='x', plane='xz',
-                                                                  target_position=shoulder_fbx_bones_ptn)
-        angle_z = ncm.get_angle_between_position_to_axis_on_plane(biped_spines_bones[0].name,
-                                                                  axis='x', plane='xy',
-                                                                  target_position=shoulder_fbx_bones_ptn)
-        for bone in biped_spines_bones:
-            bone.ry += angle_y / 3
-            bone.rz += angle_z / 3
+        for i, rot in enumerate(self.spine_transforms.rots):
+            if rot is not None:
+                biped_spines_bones[i].world_r = rot
 
     def _match_first_bone_position(self, biped_spines_bones: List['_BipedBone']):
         """첫 spine의 위치를 맞춘다
-        
+
         Notes:
             biped가 엉망이라서 다음의 순서를 지켜야 한다.
                 spine의 경우는 위치를 맞추는게 피규어 모드를 켰을 때만 가능하다.
@@ -760,10 +764,7 @@ class _MetacarpalBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
 
 
 class _MetacarpalBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
-    """허벅지 매칭
-
-    단순하게 fbx 뼈와 matrix 상의 매칭을 한다. 이후 스케일을 조절
-    """
+    """손바닥뼈 매칭"""
 
     @property
     def is_matched(self):
@@ -805,8 +806,7 @@ class _MetacarpalBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
         self.biped.figure_mode = False
         self.bone.world_r = fbx_bone.world_r
         if self.bone.drt == 'R':
-            self.bone.rx += 180
-            self.bone.ry += 180
+            self.bone.rz += 180
 
 
 class _FingersBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
@@ -986,7 +986,7 @@ class _ThighBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
             calf_bone = self.biped.bones['Bip001 R Calf']
             foot_fbx = ncm.dummy('foot_r')
 
-        foot_ptn = ncm.get_point3(foot_fbx.world_t)
+        foot_ptn = ncm.to_point3(foot_fbx.world_t)
         local_foot_ptn = foot_ptn * rt.Inverse(self.bone.world_mat)
         local_foot_ptn.y = 0
         world_foot_ptn = local_foot_ptn * self.bone.world_mat
@@ -1622,7 +1622,63 @@ class _BipedToFBXBoneLinker:
                 ncm.link_constraint(target_fbx_spine.name, spine.name)
 
 
-class _SpineTransformCalculater:
+class _SpinePlaneConverter:
+    """spine의 위치를 local plane으로 바꿔 계산한다"""
+
+    def __init__(self, spine_calculator: '_SpineTransformsCalculator', axis: str):
+        self.spine_calculator = spine_calculator
+        self.axis = axis
+
+    @property
+    def is_axis_positive(self):
+        local_spine_ptns = [ncm.to_point3(fbx_spine.world_t) * rt.Inverse(self.spine_calculator.refer_mat)
+                            for fbx_spine in self.spine_calculator.fbx_spines]
+        if self.axis == 'y':
+            axis_idx = 1
+        elif self.axis == 'z':
+            axis_idx = 2
+        else:
+            raise NotImplementedError(self.axis)
+
+        max_idx = 0
+        max_val = 0
+
+        for i, ptn in enumerate(local_spine_ptns):
+            if abs(ptn[axis_idx]) > max_val:
+                max_val = abs(ptn[axis_idx])
+                max_idx = i
+
+        if local_spine_ptns[max_idx][axis_idx] > 0:
+            return True
+        else:
+            return False
+
+    @property
+    def axis_extension_len(self):
+        """각 축으로 튀어나온 정도"""
+        local_spine_ptns = [ncm.to_point3(fbx_spine.world_t) * rt.Inverse(self.spine_calculator.refer_mat)
+                            for fbx_spine in self.spine_calculator.fbx_spines]
+        if self.axis == 'y':
+            axis_idx = 1
+        elif self.axis == 'z':
+            axis_idx = 2
+        else:
+            raise NotImplementedError(self.axis)
+
+        return max([abs(ptn[axis_idx])
+                    for ptn in local_spine_ptns])
+
+    @property
+    def axis_extension_vec(self):
+        if self.axis == 'y':
+            return np.array([0, self.axis_extension_len, 0])
+        elif self.axis == 'z':
+            return np.array([0, 0, self.axis_extension_len])
+        else:
+            raise NotImplementedError(self.axis)
+
+
+class _SpineTransformsCalculator:
     """spine의 위치와 rotation을 계산한다
     
     지금은 3개 짜리 spine을 기준으로만 만들었다.
@@ -1633,39 +1689,230 @@ class _SpineTransformCalculater:
 
     @property
     def size(self):
-        return
-
-    @property
-    def ptns(self):
-        return
+        return self._size
 
     @property
     def rots(self):
-        return
+        return self._rots
+
+    def calculate(self, test=False):
+        """spine의 위치와 rotation을 계산한다"""
+        self.test = test
+        self.fbx_spines = self._get_fbx_spines()
+        self.spine_target = _SpineTargetForAnimationTransfer(self)
+        self.spine_len = self._get_spine_length()
+        self.refer_mat = self._get_reference_matrix()
+        self.axis_y_conv = _SpinePlaneConverter(self, 'y')
+        self.axis_z_conv = _SpinePlaneConverter(self, 'z')
+        self.max_axis_extension_len = self._get_max_axis_extension_length()
+        self._size = self._calculate_size()
+        self.axis_vec = self._calculate_axis_vector()
+
+        self._calculate_spine_world_position()
+        self._calculate_rotations()
+        
+        self.spine_target.delete()
+
+    def _get_fbx_spines(self):
+        return [ncm.dummy('spine_0' + str(idx))
+                for idx in range(1, 6)]
+
+    def _calculate_size(self):
+        """허리의 전체 크기를 반환한다
+        
+        허리를 1자로 쭉 폈을 때 튀지 않으려면 fbx의 bone과 biped bone의 전체 길이가 같아야 한다.
+        """
+        spines = self.fbx_spines + [self.spine_target]
+        spine_len = 0
+        for i, spine in enumerate(spines[:-1]):
+            next_spine = spines[i + 1]
+            spine_len += np.linalg.norm(spine.world_t - next_spine.world_t)
+        return spine_len / 3
+
+    def _calculate_spine_world_position(self):
+        local_ptns = self._calculate_spine_local_positions()
+        self.world_ptns = [np.array(ncm.to_point3(ptn) * self.refer_mat)
+                           for ptn in local_ptns]
+        # self._make_test_world_position_points()  # 테스트용 구문
+
+    def _make_test_world_position_points(self):
+        """world ptn을 제대로 계산했는지 확인하기 위한 points를 만든다"""
+        for i, ptn in enumerate(self.world_ptns):
+            point = ncm.point('test_ptn_' + str(i + 1))
+            point.world_t = ptn
+
+    def _make_test_world_rotation_points(self):
+        """rotation을 제대로 계산했는지 확인하기 위한 points를 만든다"""
+        for i, ptn in enumerate(self.world_ptns):
+            point = ncm.point('test_ptn_' + str(i + 1))
+            point.world_t = ptn
+
+    def _calculate_rotations(self):
+        """rotation을 계산한다
+        
+        spine의 위치는 크기와 rotation으로 정해진다. 피규어 모드를 켜도
+        직접 움직이는 것은 안된다.
+        """
+        self._rots = [None] * 3
+        self._rots[0] = self._calculate_rotation_for_first_spine()
+        self._rots[2] = self._calculate_rotation_for_last_spine()
+        self._rots[1] = self._calculate_rotation_for_middle_spine()
+        # self._make_test_world_rotation_points()  # 테스트용 구문
+
+    def _calculate_rotation_for_middle_spine(self):
+        axis_x = np.array(self.world_ptns[1] - self.world_ptns[0]) / np.linalg.norm(
+            self.world_ptns[1] - self.world_ptns[0])
+        mat_1 = rt.Matrix3(1)
+        mat_1.rotation = self._rots[0]
+        mat_3 = rt.Matrix3(1)
+        mat_3.rotation = self._rots[2]
+
+        axis_z = (np.array(mat_1[2]) + np.array(mat_3[2])) / 2
+        mat = rt.Matrix3(ncm.to_point3(axis_x),
+                         ncm.to_point3(np.cross(axis_z, axis_x)),
+                         ncm.to_point3(axis_z),
+                         rt.Point3(0, 0, 0))
+        return mat.rotation
+
+    def _calculate_rotation_for_last_spine(self):
+        """마지막 spine의 rotation을 계산한다
+        
+        Notes:
+            허리의 쉐잎만 보자면 spine_target으로 계산하는게 맞겠지만
+            계산상의 오차가 생기는 것 같다.
+            
+        """
+        axis_x = np.array(self.spine_target.world_t - self.world_ptns[1]) / np.linalg.norm(
+            self.spine_target.world_t - self.world_ptns[1])
+        axis_z = -self.spine_target.world_mat[2]
+        mat = rt.Matrix3(ncm.to_point3(axis_x),
+                         ncm.to_point3(np.cross(axis_z, axis_x)),
+                         ncm.to_point3(axis_z),
+                         rt.Point3(0, 0, 0))
+        return mat.rotation
+
+    def _calculate_rotation_for_first_spine(self):
+        axis_x = np.array(self.world_ptns[0] - self.fbx_spines[0].world_t) / np.linalg.norm(
+            self.world_ptns[0] - self.fbx_spines[0].world_t)
+        axis_z = -self.fbx_spines[0].world_mat[2]
+        mat = rt.Matrix3(ncm.to_point3(axis_x),
+                         ncm.to_point3(np.cross(axis_z, axis_x)),
+                         ncm.to_point3(axis_z),
+                         rt.Point3(0, 0, 0))
+        return mat.rotation
+
+    def _calculate_spine_local_positions(self):
+        """두번째, 세번째 spine의 위치를 계산한다"""
+        ptns = np.zeros((2, 3))
+
+        ptns[0][0] = (self.spine_len - self.size) / 2
+        ptns[1][0] = self.spine_len - ptns[0][0]
+
+        vec = self.axis_vec * self.max_axis_extension_len
+
+        if self.axis_y_conv.is_axis_positive:
+            ptns[0][1] = vec[1]
+            ptns[1][1] = vec[1]
+        else:
+            ptns[0][1] = -vec[1]
+            ptns[1][1] = -vec[1]
+
+        if self.axis_z_conv.is_axis_positive:
+            ptns[0][2] = vec[2]
+            ptns[1][2] = vec[2]
+        else:
+            ptns[0][2] = -vec[2]
+            ptns[1][2] = -vec[2]
+
+        return ptns
+
+    def _get_max_axis_extension_length(self):
+        """y, z 각 축으로 가장 많이 튀어나온 길이를 구한다"""
+        return max([self.axis_y_conv.axis_extension_len,
+                    self.axis_z_conv.axis_extension_len])
+
+    def _get_spine_length(self):
+        spine_vec = self.spine_target.world_t - self.fbx_spines[0].world_t
+        return np.linalg.norm(spine_vec)
+
+    def _calculate_axis_vector(self):
+        """spine은 곡선의 방향을 구한다.
+        
+        spine이 뒤쪽으로 곡선이 생기면 +y 방향
+        spine이 우측으로 곡선이 생기면 +z 방향이다.
+        
+        spine은 양 축으로 모두 곡선이 생길 수 있으므로 두 축의 평균을 구한다.
+        이 벡터는 normalize된 vector를 뜻한다.
+        """
+        axis_vec = (self.axis_y_conv.axis_extension_vec + self.axis_z_conv.axis_extension_vec) / 2
+        return axis_vec / np.linalg.norm(axis_vec)
+
+    def _get_reference_matrix(self):
+        """spine의 위치를 계산할 때 사용할 기준이 되는 matrix를 반환한다
+        
+        첫번째 spine을 기준으로 생성한다. z축(옆구리), x축(up), y축(뒤쪽)인 fbx bone을 기준으로 작성했다.
+        
+        1. z축은 첫번째 spine의 z축을 그대로 쓴다.
+        2. x축은 첫번째 spine에서 spine target을 향하는 vector이다
+        3. y축은 외적으로 구한다.
+        """
+        axis_z = np.array(self.fbx_spines[0].world_mat[2])
+        axis_x = np.array(self.spine_target.world_t - self.fbx_spines[0].world_t) / np.linalg.norm(
+            self.spine_target.world_t - self.fbx_spines[0].world_t)
+        axis_y = np.cross(axis_z, axis_x)
+
+        return rt.Matrix3(ncm.to_point3(axis_x),
+                          ncm.to_point3(axis_y),
+                          ncm.to_point3(axis_z),
+                          ncm.to_point3(self.fbx_spines[0].world_t))
 
 
-class _SpineTargetForAnimationTransfer:
+class _SpineTargetForAnimationTransfer(nodes._Point):
     """spine의 위치를 계산할 target을 만든다"""
 
-    def __init__(self, biped: '_Biped'):
-        self.biped = biped
+    def __init__(self, spine_calculator: '_SpineTransformsCalculator'):
+        super(_SpineTargetForAnimationTransfer, self).__init__('spine_animation_target')
+        self.spine_calculator = spine_calculator
 
-    @property
-    def name(self):
-        return 'spine_animation_target'
-
-    def make(self):
-        spine_target = ncm.point(self.name)
         clavicle_l = ncm.dummy('clavicle_l')
         clavicle_r = ncm.dummy('clavicle_r')
         last_spine = ncm.dummy('spine_05')
 
-        spine_target.world_t = (clavicle_l.world_t + clavicle_r.world_t) / 2
-        spine_target.world_r = last_spine.world_r
-        spine_target.parent = last_spine
+        self.world_t = (clavicle_l.world_t + clavicle_r.world_t) / 2
+        self.world_r = last_spine.world_r
 
-    def delete(self):
-        ncm.point(self.name).delete()
+
+class _BipedToFBXCharacterMatcher:
+    def __init__(self, biped: '_Biped'):
+        self.biped = biped
+        self.spine_transforms = _SpineTransformsCalculator(biped)
+
+    def __call__(self, is_bind_mode=True):
+        """fbx 캐릭터에 맞춘다
+
+        Args:
+            is_bind_mode: bind 일때 매칭 하는 방법과 bind 이후 매칭하는 방법이 다르다.
+                bind 할때는 크기랑 피규어 모드를 껐다 키는 행위를 하지만
+                한번 bind 이후에는 그냥 rotation만 맞추면 된다.  
+        Notes:
+            t, r을 맞추는 pose와 size를 맞추는 스케일은 각각 따로 작업을 해야 한다.
+            setTransform으로 scale을 변경하면 다른 bone들의 스케일까지 영향을 준다.. 
+            biped는 아주 욕나오게 이상한 구조를 가지고 있다.
+        """
+        self.is_bind_mode = is_bind_mode
+        self.spine_transforms.calculate()
+        self._match_scale_to_fbx_character()
+        self._match_pose_to_fbx_character()
+
+    def _match_scale_to_fbx_character(self):
+        self.biped.figure_mode = True
+        for bone in self.biped.bones:
+            bone.match_scale_to_fbx_bone()
+        self.biped.figure_mode = False
+
+    def _match_pose_to_fbx_character(self):
+        for bone in self.biped.bones:
+            bone.match_pose_to_fbx_bone()
 
 
 class _Biped:
@@ -1685,7 +1932,7 @@ class _Biped:
             self.node = None  # biped node
         self.bones = _BipedBones(self)
         self.link_to_fbx_character = _BipedToFBXBoneLinker(self)
-        self.spine_target = _SpineTargetForAnimationTransfer(self)
+        self.match_to_fbx_character = _BipedToFBXCharacterMatcher(self)
 
     @property
     def name(self):
@@ -1747,10 +1994,10 @@ class _Biped:
         """fbx 캐릭터의 애니메이션을 biped에 옮긴다"""
         if start_frame is None:
             start_frame = ncm.get_animation_range()[0]
+            start_frame
         if end_frame is None:
             end_frame = ncm.get_animation_range()[1]
 
-        self.spine_target.make()
         for bone in self.bones:
             bone.transfer_animation(start_frame, end_frame)
         # self.spine_target.delete()
@@ -1797,31 +2044,6 @@ class _Biped:
 
         if make_match_guide:
             self._make_match_guides()
-
-    def match_to_fbx_character(self, scale=True, pose=True):
-        """fbx 캐릭터에 맞춘다
-        
-        Notes:
-            t, r을 맞추는 pose와 size를 맞추는 스케일은 각각 따로 작업을 해야 한다.
-            setTransform으로 scale을 변경하면 다른 bone들의 스케일까지 영향을 준다.. 
-            아주 욕나오게 이상한 구조를 가지고 있다.
-        """
-        self.spine_target.make()
-        if scale:
-            self._match_scale_to_fbx_character()
-        if pose:
-            self._match_pose_to_fbx_character()
-        # self.spine_target.delete()
-
-    def _match_scale_to_fbx_character(self):
-        self.figure_mode = True
-        for bone in self.bones:
-            bone.match_scale_to_fbx_bone()
-        self.figure_mode = False
-
-    def _match_pose_to_fbx_character(self):
-        for bone in self.bones:
-            bone.match_pose_to_fbx_bone()
 
     def _make_match_guides(self):
         """biped의 위치를 수정할 때 사용할 match guide들도 같이 만든다.

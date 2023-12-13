@@ -98,7 +98,7 @@ def get_angle_between_position_to_axis_on_plane(node_name: str, axis: str, plane
         raise NotImplementedError(axis)
     world_ptn = local_ptn * world_mat
     orig_ptn = world_mat.position
-    local_tgt_ptn = get_point3(target_position) * rt.Inverse(world_mat)
+    local_tgt_ptn = to_point3(target_position) * rt.Inverse(world_mat)
 
     if axis == 'x':
         if plane == 'xy':
@@ -130,7 +130,7 @@ def get_angle_between_position_to_axis_on_plane(node_name: str, axis: str, plane
     vec_2 = world_tgt_ptn - orig_ptn
     angle = get_angle_between_vectors(to_numpy(vec_1), to_numpy(vec_2))
 
-    local_position = get_point3(target_position) * rt.Inverse(world_mat)
+    local_position = to_point3(target_position) * rt.Inverse(world_mat)
     if axis == 'x':
         if plane == 'xy':
             if local_position.y < 0:
@@ -156,13 +156,16 @@ def get_angle_between_position_to_axis_on_plane(node_name: str, axis: str, plane
         raise NotImplementedError(axis, plane)
 
 
-def get_current_frame():
-    return rt.currentTime
+def get_current_frame() -> float:
+    return float(rt.currentTime)
 
-def get_point3(value):
+
+def to_point3(value):
     """입력한 값을 max의 point3으로 변환해 준다."""
     if isinstance(value, (list, tuple, np.ndarray)):
         return rt.Point3(float(value[0]), float(value[1]), float(value[2]))
+    elif rt.ClassOf(value) == rt.Point3:
+        return value
     else:
         raise NotImplementedError(value, type(value))
 
