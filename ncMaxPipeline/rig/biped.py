@@ -155,8 +155,8 @@ class _BipedBoneAnimationTransferBase(ABC):
         return self.bone.biped
 
     def _make_points(self):
-        self.bone_point = ncm.point('bone_pt')
-        self.fbx_point = ncm.point('fbx_pt')
+        self.bone_point = ncm.Point('bone_pt')
+        self.fbx_point = ncm.Point('fbx_pt')
 
     def _delete_points(self):
         self.bone_point.delete()
@@ -174,7 +174,7 @@ class _CommonAnimationTransfer(_BipedBoneAnimationTransferBase):
 
     def _execute_match(self):
         self._make_points()
-        fbx_bone = ncm.dummy(self.bone.preset_fbx_bone_name)
+        fbx_bone = ncm.Dummy(self.bone.preset_fbx_bone_name)
 
         self.bone_point.node.transform = self.bone.node.transform
         self.fbx_point.node.transform = fbx_bone.node.transform
@@ -249,9 +249,9 @@ class _BipedBoneToFBXBoneMatcherBase(ABC):
     def _execute_match(self):
         pass
 
-    def _get_fbx_bone_length(self, fbx_bone: nodes._Dummy):
+    def _get_fbx_bone_length(self, fbx_bone: nodes.Dummy):
         """fbx 뼈의 길이를 구한다."""
-        child_fbx_bone = ncm.dummy(fbx_bone.children[0])
+        child_fbx_bone = ncm.Dummy(fbx_bone.children[0])
         bone_length = np.linalg.norm(fbx_bone.world_t - child_fbx_bone.world_t)
         return bone_length
 
@@ -331,12 +331,12 @@ class _ComPoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
         self.biped.figure_mode = False
 
     def _match_rotation(self):
-        thigh_l = ncm.dummy('thigh_l')
-        thigh_r = ncm.dummy('thigh_r')
+        thigh_l = ncm.Dummy('thigh_l')
+        thigh_r = ncm.Dummy('thigh_r')
         axis_y = (thigh_l.world_t - thigh_r.world_t) / np.linalg.norm(thigh_l.world_t - thigh_r.world_t)
 
-        pelvis = ncm.dummy('pelvis')
-        spine_1 = ncm.dummy('spine_01')
+        pelvis = ncm.Dummy('pelvis')
+        spine_1 = ncm.Dummy('spine_01')
         axis_z = (spine_1.world_t - pelvis.world_t) / np.linalg.norm(spine_1.world_t - pelvis.world_t)
 
         axis_x = np.cross(axis_y, axis_z)
@@ -348,8 +348,8 @@ class _ComPoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
         self.bone.world_r = mat.rotation
 
     def _match_position(self):
-        thigh_l = ncm.dummy('thigh_l')
-        thigh_r = ncm.dummy('thigh_r')
+        thigh_l = ncm.Dummy('thigh_l')
+        thigh_r = ncm.Dummy('thigh_r')
         self.bone.world_t = (thigh_l.world_t + thigh_r.world_t) / 2
 
 
@@ -381,7 +381,7 @@ class _ToeBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
             fbx_toe = 'ball_r'
             fbx_toe_end = 'toeEnd_r'
 
-        return float(np.linalg.norm(ncm.dummy(fbx_toe).world_t - ncm.dummy(fbx_toe_end).world_t))
+        return float(np.linalg.norm(ncm.Dummy(fbx_toe).world_t - ncm.Dummy(fbx_toe_end).world_t))
 
 
 class _ToeBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
@@ -416,9 +416,9 @@ class _FootBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
                    fbx foot에서 직선을 내려서 직각 삼각형을 구한다.
                 2. 그 비율대로 biped foot의 스케일을 조절한다.            
         """
-        fbx_bone = ncm.dummy(self.bone.preset_fbx_bone_name)
+        fbx_bone = ncm.Dummy(self.bone.preset_fbx_bone_name)
         fbx_foot_ptn = fbx_bone.world_t
-        fbx_toe_ptn = ncm.dummy(fbx_bone.children[0]).world_t
+        fbx_toe_ptn = ncm.Dummy(fbx_bone.children[0]).world_t
         fbx_heel_ptn = fbx_foot_ptn.copy()
         fbx_heel_ptn[2] = fbx_toe_ptn[2]
 
@@ -444,17 +444,17 @@ class _FootBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
         return self.bone.pure_name == 'Foot'
 
     def _execute_match(self):
-        fbx_bone = ncm.dummy(self.bone.preset_fbx_bone_name)
+        fbx_bone = ncm.Dummy(self.bone.preset_fbx_bone_name)
         self._match_rotation(fbx_bone)
 
-    def _match_rotation(self, fbx_bone: nodes._Dummy):
+    def _match_rotation(self, fbx_bone: nodes.Dummy):
         """rotation을 설정한다.
 
         fbx과의 축을 완전히 일치 시키지 않는다.
         biped의 발바닥면이 xy평면과 일치하게 해달라는 애니메이션팀의 요청에 따라
         rx값만 수정한다.
         """
-        ball = ncm.dummy(fbx_bone.children[0])
+        ball = ncm.Dummy(fbx_bone.children[0])
         angle = ncm.get_angle_between_position_to_axis_on_plane(self.bone.name,
                                                                 axis='y', plane='yz',
                                                                 target_position=ball.world_t)
@@ -516,7 +516,7 @@ class _SpineBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
                 그래서 반드시 com의 위치도 피규어 모드를 키고 변경해야 한다.
                 그러면 피규어 모드를 키더라도 com의 위치는 변경이 되지 않는다.
         """
-        first_fbx_bone = ncm.dummy('spine_01')
+        first_fbx_bone = ncm.Dummy('spine_01')
         biped_spines_bones[0].world_t = first_fbx_bone.world_t
 
 
@@ -536,8 +536,8 @@ class _PelvisBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
         self._match_size()
 
     def _match_size(self):
-        thigh_l = ncm.dummy('thigh_l')
-        thigh_r = ncm.dummy('thigh_r')
+        thigh_l = ncm.Dummy('thigh_l')
+        thigh_r = ncm.Dummy('thigh_r')
         thigh_gap = np.linalg.norm(thigh_l.world_t - thigh_r.world_t)
         self.bone.size = thigh_gap
 
@@ -561,14 +561,14 @@ class _ClavicleBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
 
     def _execute_match(self):
         if self.bone.drt == 'L':
-            fbx_bone = ncm.dummy('clavicle_l')
+            fbx_bone = ncm.Dummy('clavicle_l')
         else:
-            fbx_bone = ncm.dummy('clavicle_r')
+            fbx_bone = ncm.Dummy('clavicle_r')
         self.bone.world_t = fbx_bone.world_t
         self._match_to_scale(fbx_bone)
 
     def _match_to_scale(self, fbx_bone: '_BipedBone'):
-        child = ncm.dummy(fbx_bone.children[0])
+        child = ncm.Dummy(fbx_bone.children[0])
         bone_length = np.linalg.norm(fbx_bone.world_t - child.world_t)
         self.bone.size = bone_length
 
@@ -581,9 +581,9 @@ class _ClavicleBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
 
     def _execute_match(self):
         if self.bone.drt == 'L':
-            fbx_bone = ncm.dummy('clavicle_l')
+            fbx_bone = ncm.Dummy('clavicle_l')
         else:
-            fbx_bone = ncm.dummy('clavicle_r')
+            fbx_bone = ncm.Dummy('clavicle_r')
         self._match_to_position(fbx_bone)
         self._match_to_rotation(fbx_bone)
 
@@ -600,8 +600,8 @@ class _ClavicleBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
         self._finetune_rotation(fbx_bone)
 
     def _finetune_rotation(self, fbx_bone):
-        child_fbx_bone = ncm.dummy(fbx_bone.children[0])
-        dum = ncm.dummy(fbx_bone.name + '_match_guide_dum')
+        child_fbx_bone = ncm.Dummy(fbx_bone.children[0])
+        dum = ncm.Dummy(fbx_bone.name + '_match_guide_dum')
         dum.world_mat = fbx_bone.world_mat
         grp = dum.make_grp()
         if self.bone.drt == 'L':
@@ -630,7 +630,7 @@ class _UpperArmBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
         return self.bone.pure_name in ['UpperArm']
 
     def _execute_match(self):
-        self.bone.size = self._get_fbx_bone_length(ncm.dummy('upperarm_l'))
+        self.bone.size = self._get_fbx_bone_length(ncm.Dummy('upperarm_l'))
 
 
 class _UpperArmBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
@@ -642,11 +642,11 @@ class _UpperArmBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
 
     def _execute_match(self):
         if self.bone.drt == 'L':
-            fbx_bone = ncm.dummy('upperarm_l')
-            hand_fbx_bone = ncm.dummy('hand_l')
+            fbx_bone = ncm.Dummy('upperarm_l')
+            hand_fbx_bone = ncm.Dummy('hand_l')
         else:
-            fbx_bone = ncm.dummy('upperarm_r')
-            hand_fbx_bone = ncm.dummy('hand_r')
+            fbx_bone = ncm.Dummy('upperarm_r')
+            hand_fbx_bone = ncm.Dummy('hand_r')
         self.bone.world_r = fbx_bone.world_r
         if self.bone.drt == 'R':
             self.bone.ry += 180
@@ -667,7 +667,7 @@ class _ForearmBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
         return self.bone.pure_name in ['Forearm']
 
     def _execute_match(self):
-        self.bone.size = self._get_fbx_bone_length(ncm.dummy('lowerarm_l'))
+        self.bone.size = self._get_fbx_bone_length(ncm.Dummy('lowerarm_l'))
 
 
 class _ForearmBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
@@ -692,13 +692,13 @@ class _ForearmBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
         self.bone.world_r = parent_bone.world_r
 
         if self.bone.drt == 'L':
-            fbx_bone_1 = ncm.dummy('upperarm_l')
-            fbx_bone_2 = ncm.dummy('lowerarm_l')
-            fbx_bone_3 = ncm.dummy('hand_l')
+            fbx_bone_1 = ncm.Dummy('upperarm_l')
+            fbx_bone_2 = ncm.Dummy('lowerarm_l')
+            fbx_bone_3 = ncm.Dummy('hand_l')
         else:
-            fbx_bone_1 = ncm.dummy('upperarm_r')
-            fbx_bone_2 = ncm.dummy('lowerarm_r')
-            fbx_bone_3 = ncm.dummy('hand_r')
+            fbx_bone_1 = ncm.Dummy('upperarm_r')
+            fbx_bone_2 = ncm.Dummy('lowerarm_r')
+            fbx_bone_3 = ncm.Dummy('hand_r')
 
         angle = ncm.get_angle_between_vectors(fbx_bone_1.world_t - fbx_bone_2.world_t,
                                               fbx_bone_3.world_t - fbx_bone_2.world_t)
@@ -739,9 +739,9 @@ class _HandBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
                 fbx bone들의 각도만큼 구부려 준다.
         """
         if self.bone.drt == 'L':
-            fbx_bone = ncm.dummy('hand_l')
+            fbx_bone = ncm.Dummy('hand_l')
         else:
-            fbx_bone = ncm.dummy('hand_r')
+            fbx_bone = ncm.Dummy('hand_r')
         self.bone.world_r = fbx_bone.world_r
         if self.bone.drt == 'R':
             self.bone.rx += 180
@@ -760,7 +760,7 @@ class _MetacarpalBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
 
     def _execute_match(self):
         """"""
-        fbx_bone = ncm.dummy(self.bone.preset_fbx_bone_name)
+        fbx_bone = ncm.Dummy(self.bone.preset_fbx_bone_name)
         self.bone.size = self._get_fbx_bone_length(fbx_bone)
 
 
@@ -788,13 +788,13 @@ class _MetacarpalBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
         """
         self.biped.figure_mode = True
         if self.bone.drt == 'L':
-            hand_fbx_bone = ncm.dummy('hand_l')
+            hand_fbx_bone = ncm.Dummy('hand_l')
             hand_bone = self.biped.bones['Bip001 L Hand']
         else:
-            hand_fbx_bone = ncm.dummy('hand_r')
+            hand_fbx_bone = ncm.Dummy('hand_r')
             hand_bone = self.biped.bones['Bip001 R Hand']
 
-        fbx_bone = ncm.dummy(self.bone.preset_fbx_bone_name)
+        fbx_bone = ncm.Dummy(self.bone.preset_fbx_bone_name)
         local_mat = fbx_bone.world_mat * rt.Inverse(hand_fbx_bone.world_mat)
         if self.bone.drt == 'L':
             mat = local_mat * hand_bone.world_mat
@@ -818,11 +818,11 @@ class _FingersBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
 
     def _execute_match(self):
         """fbx import 할때 손끝이 빠져있는 경우가 있다"""
-        fbx_bone = ncm.dummy(self.bone.preset_fbx_bone_name)
+        fbx_bone = ncm.Dummy(self.bone.preset_fbx_bone_name)
         if fbx_bone.children:
             self.bone.size = self._get_fbx_bone_length(fbx_bone)
         else:
-            self.bone.size = self._get_fbx_bone_length(ncm.dummy(fbx_bone.parent)) * 0.9
+            self.bone.size = self._get_fbx_bone_length(ncm.Dummy(fbx_bone.parent)) * 0.9
 
 
 class _FingersBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
@@ -843,7 +843,7 @@ class _FingersBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
                 먼저 팔을 쭉 핀다음 (팔꿈치가 일자가 되게)
                 fbx bone들의 각도만큼 구부려 준다.
         """
-        fbx_bone = ncm.dummy(self.bone.preset_fbx_bone_name)
+        fbx_bone = ncm.Dummy(self.bone.preset_fbx_bone_name)
         self.bone.world_r = fbx_bone.world_r
         if self.bone.drt == 'R':
             self.bone.rx += 180
@@ -858,7 +858,7 @@ class _NeckBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
 
     def _execute_match(self):
         """fbx import 할때 손끝이 빠져있는 경우가 있다"""
-        fbx_bone = ncm.dummy(self.bone.preset_fbx_bone_name)
+        fbx_bone = ncm.Dummy(self.bone.preset_fbx_bone_name)
         self.bone.size = self._get_fbx_bone_length(fbx_bone)
 
 
@@ -878,7 +878,7 @@ class _NeckBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
         Notes:
             위치 이동이 figure mode를 켜야만 가능하다.
         """
-        fbx_bone = ncm.dummy(self.bone.preset_fbx_bone_name)
+        fbx_bone = ncm.Dummy(self.bone.preset_fbx_bone_name)
         self.biped.figure_mode = True
         self.bone.world_t = fbx_bone.world_t
         self.biped.figure_mode = False
@@ -912,7 +912,7 @@ class _HeadBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
         Notes:
             위치 이동이 figure mode를 켜야만 가능하다.
         """
-        fbx_bone = ncm.dummy(self.bone.preset_fbx_bone_name)
+        fbx_bone = ncm.Dummy(self.bone.preset_fbx_bone_name)
         self.bone.world_r = fbx_bone.world_r
         self.bone.rx = 180
 
@@ -932,15 +932,15 @@ class _ThighBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
 
     def _match_biped_bone(self, fbx_bone_name: str):
         if self.bone.drt == 'L':
-            fbx_bone = ncm.dummy(fbx_bone_name + '_l')
+            fbx_bone = ncm.Dummy(fbx_bone_name + '_l')
         else:
-            fbx_bone = ncm.dummy(fbx_bone_name + '_r')
+            fbx_bone = ncm.Dummy(fbx_bone_name + '_r')
         if not ncm.exists_objects(fbx_bone.name):
             raise ValueError(f"Cannot find fbx bone: {fbx_bone}")
         self._match_size(fbx_bone)
 
-    def _match_size(self, fbx_bone: nodes._Dummy):
-        child_fbx_bone = ncm.dummy(fbx_bone.children[0])
+    def _match_size(self, fbx_bone: nodes.Dummy):
+        child_fbx_bone = ncm.Dummy(fbx_bone.children[0])
         bone_length = np.linalg.norm(fbx_bone.world_t - child_fbx_bone.world_t)
         self.bone.size = bone_length
 
@@ -960,15 +960,15 @@ class _ThighBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
 
     def _match_biped_bone(self, fbx_bone_name: str):
         if self.bone.drt == 'L':
-            fbx_bone = ncm.dummy(fbx_bone_name + '_l')
+            fbx_bone = ncm.Dummy(fbx_bone_name + '_l')
         else:
-            fbx_bone = ncm.dummy(fbx_bone_name + '_r')
+            fbx_bone = ncm.Dummy(fbx_bone_name + '_r')
         if not ncm.exists_objects(fbx_bone.name):
             raise ValueError(f"Cannot find fbx bone: {fbx_bone}")
         self._match_rotation(fbx_bone)
         self._match_size(fbx_bone)
 
-    def _match_rotation(self, fbx_bone: nodes._Dummy):
+    def _match_rotation(self, fbx_bone: nodes.Dummy):
         self._match_rotation_to_fbx_bone(fbx_bone)
         self._set_rotation_y_to_foot_bone()
 
@@ -982,10 +982,10 @@ class _ThighBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
         """
         if self.bone.drt == 'L':
             calf_bone = self.biped.bones['Bip001 L Calf']
-            foot_fbx = ncm.dummy('foot_l')
+            foot_fbx = ncm.Dummy('foot_l')
         else:
             calf_bone = self.biped.bones['Bip001 R Calf']
-            foot_fbx = ncm.dummy('foot_r')
+            foot_fbx = ncm.Dummy('foot_r')
 
         foot_ptn = ncm.to_point3(foot_fbx.world_t)
         local_foot_ptn = foot_ptn * rt.Inverse(self.bone.world_mat)
@@ -1006,8 +1006,8 @@ class _ThighBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
         if self.bone.drt == 'L':
             self.bone.rz = 180
 
-    def _match_size(self, fbx_bone: nodes._Dummy):
-        child_fbx_bone = ncm.dummy(fbx_bone.children[0])
+    def _match_size(self, fbx_bone: nodes.Dummy):
+        child_fbx_bone = ncm.Dummy(fbx_bone.children[0])
         bone_length = np.linalg.norm(fbx_bone.world_t - child_fbx_bone.world_t)
         self.bone.size = bone_length
 
@@ -1023,13 +1023,13 @@ class _CalfBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
         return self.bone.pure_name == 'Calf'
 
     def _execute_match(self):
-        fbx_bone = ncm.dummy(self.bone.preset_fbx_bone_name)
+        fbx_bone = ncm.Dummy(self.bone.preset_fbx_bone_name)
         if not ncm.exists_objects(fbx_bone.name):
             raise ValueError(f"Cannot find fbx bone: {fbx_bone}")
         self._match_size(fbx_bone)
 
-    def _match_size(self, fbx_bone: nodes._Dummy):
-        child_fbx_bone = ncm.dummy(fbx_bone.children[0])
+    def _match_size(self, fbx_bone: nodes.Dummy):
+        child_fbx_bone = ncm.Dummy(fbx_bone.children[0])
         bone_length = np.linalg.norm(fbx_bone.world_t - child_fbx_bone.world_t)
         self.bone.size = bone_length
 
@@ -1042,7 +1042,7 @@ class _CalfBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
         return self.bone.pure_name == 'Calf'
 
     def _execute_match(self):
-        fbx_bone = ncm.dummy(self.bone.preset_fbx_bone_name)
+        fbx_bone = ncm.Dummy(self.bone.preset_fbx_bone_name)
         if not ncm.exists_objects(fbx_bone.name):
             raise ValueError(f"Cannot find fbx bone: {fbx_bone}")
         self._match_rotation()
@@ -1050,9 +1050,9 @@ class _CalfBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
     def _match_rotation(self):
         # self.bone.node.rotation = fbx_bone.node.rotation
         if self.bone.drt == 'L':
-            foot_fbx = ncm.dummy('foot_l')
+            foot_fbx = ncm.Dummy('foot_l')
         else:
-            foot_fbx = ncm.dummy('foot_r')
+            foot_fbx = ncm.Dummy('foot_r')
         angle = ncm.get_angle_between_position_to_axis_on_plane(self.bone.name,
                                                                 'x', 'xy', foot_fbx.world_t)
         self.bone.rz += angle
@@ -1067,7 +1067,7 @@ class _CommonBoneAttributes:
 
     def _get_fbx_bone(self):
         fbx_bone_name = getattr(self.biped.bone_preset, self.bone.pure_name).fbx_bone
-        return ncm.dummy(fbx_bone_name + '_l')
+        return ncm.Dummy(fbx_bone_name + '_l')
 
 
 class _CommonBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase, _CommonBoneAttributes):
@@ -1371,7 +1371,7 @@ class _BipedBone(nodes._Object):
             raise NotImplementedError(f"Cannot find match to fbx bone: {self.name}")
 
 
-class _FBXDummyBone(nodes._Dummy):
+class _FBXDummyBone(nodes.Dummy):
     """fbx를 import하면 joint가 dummy로 들어온다.
     
     dummy로 변환된 bone을 지칭한다.
@@ -1561,7 +1561,7 @@ class _BipedBones(Sequence[_BipedBone]):
                 if name in bone.pure_name]
 
     def _add_children(self, bones, bone_name: str):
-        bone_node = ncm.node(bone_name)
+        bone_node = ncm.Node(bone_name)
         for child in bone_node.children:
             child_node = ncm.get_node_by_name(child)
             if rt.ClassOf(child_node) == rt.Dummy:
@@ -1592,7 +1592,7 @@ class _BipedToFBXBoneLinker:
         
         허리뼈의 갯수가 달라졌기 때문에 1:1 대응이 안된다.
         """
-        fbx_spines = [ncm.dummy('spine_0' + str(i))
+        fbx_spines = [ncm.Dummy('spine_0' + str(i))
                       for i in range(2, 6)]
         spines = self.biped.bones.find_bones_by_pure_name('Spine')
 
@@ -1765,7 +1765,7 @@ class _SpineTransformsCalculatorBase:
         return axis_vec / np.linalg.norm(axis_vec)
 
     def _get_fbx_spines(self):
-        return [ncm.dummy('spine_0' + str(idx))
+        return [ncm.Dummy('spine_0' + str(idx))
                 for idx in range(1, 6)]
 
 
@@ -1791,13 +1791,13 @@ class _InitialSpineTransformsCalculator(_SpineTransformsCalculatorBase):
     def _make_test_world_position_points(self):
         """world ptn을 제대로 계산했는지 확인하기 위한 points를 만든다"""
         for i, ptn in enumerate(self.world_ptns):
-            point = ncm.point('test_ptn_' + str(i + 1))
+            point = ncm.Point('test_ptn_' + str(i + 1))
             point.world_t = ptn
 
     def _make_test_world_rotation_points(self):
         """rotation을 제대로 계산했는지 확인하기 위한 points를 만든다"""
         for i, ptn in enumerate(self.world_ptns):
-            point = ncm.point('test_ptn_' + str(i + 1))
+            point = ncm.Point('test_ptn_' + str(i + 1))
             point.world_t = ptn
 
     def _calculate_rotations(self):
@@ -1976,22 +1976,22 @@ class _AnimatedSpineTransformsCalculator(_SpineTransformsCalculatorBase):
         return rt.EulerToQuat(rot)
 
 
-class _ClavicleTargetForAnimationTransfer(nodes._Point):
+class _ClavicleTargetForAnimationTransfer(nodes.Point):
     """clavicle의 중심위치에 spine의 위치 계산 용 target을 만든다"""
 
     def __init__(self, spine_calculator: '_SpineTransformsCalculatorBase'):
         super(_ClavicleTargetForAnimationTransfer, self).__init__('clavicle_animation_target')
         self.spine_calculator = spine_calculator
 
-        clavicle_l = ncm.dummy('clavicle_l')
-        clavicle_r = ncm.dummy('clavicle_r')
-        last_spine = ncm.dummy('spine_05')
+        clavicle_l = ncm.Dummy('clavicle_l')
+        clavicle_r = ncm.Dummy('clavicle_r')
+        last_spine = ncm.Dummy('spine_05')
 
         self.world_t = (clavicle_l.world_t + clavicle_r.world_t) / 2
         self.world_r = last_spine.world_r
 
 
-class _LastSpineTargetForAnimationTransfer(nodes._Point):
+class _LastSpineTargetForAnimationTransfer(nodes.Point):
     """spine3의 위치를 계속 추적할 수 있도록 하는 타겟"""
 
     def __init__(self, spine_calculator: '_InitialSpineTransformsCalculator'):
@@ -2155,7 +2155,7 @@ class _Biped:
         # #         with at(f):
         # #             for bone in self.bones:
         # #                 if bone.preset_fbx_bone_name is not None:
-        # #                     fbx_bone = ncm.dummy(bone.preset_fbx_bone_name)
+        # #                     fbx_bone = ncm.Dummy(bone.preset_fbx_bone_name)
         # #                     bone.node.transform = fbx_bone.node.transform
         #         # fcount = fcount + 1
         #         # self.FitPoseByKeyFrame(self.mainBipedCom, frame=f)
