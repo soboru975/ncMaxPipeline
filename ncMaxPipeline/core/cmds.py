@@ -1,6 +1,7 @@
 import os
 import shutil
 import sys
+from enum import Enum
 from math import pi
 from typing import List
 
@@ -8,6 +9,15 @@ import numpy as np
 from pymxs import runtime as rt
 import ncMaxPipeline as ncm
 
+
+class Color(Enum):
+    YELLOW = rt.Color(255, 255, 0)
+    RED = rt.Color(255, 0, 0)
+    GREEN = rt.Color(0, 255, 0)
+    BLUE = rt.Color(0, 0, 255)
+    WHITE = rt.Color(255, 255, 255)
+    BLACK = rt.Color(0, 0, 0)
+    
 
 def exists_file(path: str):
     return rt.DoesFileExist(path)
@@ -407,6 +417,24 @@ def delete_axis_tripod(node_names: List[str]):
 def get_selected_node_names():
     """선택된 노드들의 이름을 반환한다."""
     return [node.name for node in rt.selection]
+
+
+def make_curve_from_vector(name: str, vector: np.ndarray):
+    """vector를 curve로 변환한다"""
+    points = np.zeros((2, 3))
+    points[1] = vector
+    return ncm.curve(name, points)
+
+
+def get_orthogonal_vector_to_another_vector(vector_a, vector_b):
+    """직교 벡터를 구한다.
+    
+    삼차원 공간에서 두 벡터 A와 B가 주어졌을 때, 
+    벡터 B의 끝에서 벡터 A가 만드는 라인과 직교하는 벡터를 구하는 함수
+    """
+    projected_vec = (np.dot(vector_a, vector_b) / np.dot(vector_b, vector_b)) * vector_b
+    orthogonal = vector_a - projected_vec
+    return orthogonal
 
 
 def get_animation_range():

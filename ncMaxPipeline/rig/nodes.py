@@ -18,6 +18,10 @@ def point(name: str):
     return _Point(name)
 
 
+def curve(name: str, points: np.ndarray = None):
+    return _Curve(name, points)
+
+
 class _AttributeBase:
     def __init__(self, attr_name):
         self.attr_name = attr_name
@@ -439,13 +443,24 @@ class _Node(_Object):
     @property
     def axis_tripod(self):
         return ncm.exists_objects(self.name + '_AXIS_TRIPOD')
-    
+
     @axis_tripod.setter
     def axis_tripod(self, value):
         if value:
             ncm.make_axis_tripod(self.name)
         else:
             ncm.delete_axis_tripod(self.name)
+
+    @property
+    def color(self):
+        return self.node.wireColor
+
+    @color.setter
+    def color(self, value):
+        if isinstance(value, ncm.Color):
+            self.node.wireColor = value.value
+        else:
+            raise ValueError(type(value))
 
     def make(self, name: str):
         pass
@@ -489,6 +504,21 @@ class _Dummy(_Node):
     def make(self, name: str):
         self.node = rt.Dummy()
         self.node.name = name
+
+
+class _Curve(_Node):
+    def __init__(self, name: str, points: np.ndarray):
+        self.points = points
+        super().__init__(name)
+
+    def make(self, name: str):
+        self.node = rt.SplineShape()
+        self.node.name = name
+        rt.AddNewSpline(self.node)
+        for p in self.points:
+            point = rt.Point3(float(p[0]), float(p[1]), float(p[2]))
+            rt.AddKnot(self.node, 1, rt.Name('corner'), rt.Name('line'), point)
+        rt.UpdateShape(self.node)
 
 
 class _Point(_Node):
