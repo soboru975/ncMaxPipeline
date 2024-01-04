@@ -1,0 +1,4 @@
+맥스에서 매크로로 실행 시키기 위한 파일들.
+
+ex) incremental_save.py
+    맥스에서 save 버튼을 누르면 자동으로 incremental save를 해주는 매크로.
