@@ -497,7 +497,8 @@ class _Node(_Object):
 
 
 class _Bone(_Node):
-    pass
+    def test(self):
+        print("TTTTT")
 
 
 class _Dummy(_Node):
