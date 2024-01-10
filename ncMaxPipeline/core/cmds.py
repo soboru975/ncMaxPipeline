@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import sys
 from enum import Enum
@@ -17,7 +18,7 @@ class Color(Enum):
     BLUE = rt.Color(0, 0, 255)
     WHITE = rt.Color(255, 255, 255)
     BLACK = rt.Color(0, 0, 0)
-    
+
 
 def exists_file(path: str):
     return rt.DoesFileExist(path)
@@ -224,7 +225,7 @@ def delete(names):
         names = [names]
     for name in names:
         if exists_objects(name):
-            rt.delete(get_node_by_name(name))
+            rt.Delete(get_node_by_name(name))
 
 
 def get_class_of_object(name: str):
@@ -234,14 +235,14 @@ def get_class_of_object(name: str):
         typ = ncm.get_type_of_object('Bip001 R Finger0Nub')
         print(typ == ncm.Typ.DUMMY)
     """
-    return rt.classOf(get_node_by_name(name))
+    return rt.ClassOf(get_node_by_name(name))
 
 
 def save_incremental():
     current_filepath = rt.maxFilePath + rt.maxFileName
 
     if current_filepath == "":
-        rt.messageBox("File is not saved yet. Please save the file first.",
+        rt.MessageBox("File is not saved yet. Please save the file first.",
                       title="Incremental Save Error", beep=True)
         return
 
@@ -260,7 +261,7 @@ def save_incremental():
         os.makedirs(file_specific_dir)
 
     # 현재 파일을 그대로 저장
-    rt.saveMaxFile(current_filepath)
+    rt.SaveMaxFile(current_filepath)
 
     # 파일 리스트 가져오기 및 가장 큰 버전 번호 찾기
     files = os.listdir(file_specific_dir)
@@ -273,6 +274,22 @@ def save_incremental():
     shutil.copy2(current_filepath, new_filepath)
     return new_filepath
 
+
+def open_start_up_script_folder():
+    open_path(rt.GetDir(rt.Name('userStartupScripts')) + '\\')
+    
+
+def open_path(path: str):
+    """경로를 열어준다."""
+    if exists_path(path):
+        os.startfile(path.replace('/', '\\'))
+
+def exists_path(path):
+    """경로가 존재하는지 확인한다."""
+    if path:
+        return os.path.exists(path)
+    else:
+        return False
 
 def print_previous_functions(num=5):
     def get_previous_function_name(num=2):
@@ -303,7 +320,7 @@ def print_previous_functions(num=5):
 
 def get_node_by_name(name: str):
     assert isinstance(name, str), f"Name must be string: {name}, {type(name)}"
-    return rt.getNodeByName(name)
+    return rt.GetNodeByName(name)
 
 
 def hwano():
@@ -325,9 +342,9 @@ def link_constraint(source: str, target: str):
 def get_bound_meshes_by_dummy(dummy: str) -> List[str]:
     """더미 이름을 넣으면 더미가 바인딩된 메쉬를 찾는다"""
     meshes = []
-    for node in rt.objects:
+    for node in rt.Objects:
         for mod in node.modifiers:
-            if rt.classOf(mod) == rt.Skin:
+            if rt.ClassOf(mod) == rt.Skin:
                 for bone in rt.skinOps.GetBoneNodes(mod):
                     if bone.name == dummy:
                         meshes.append(node.name)
@@ -338,7 +355,7 @@ def get_bound_meshes_by_dummy(dummy: str) -> List[str]:
 def is_skinned_mesh(mesh: str) -> bool:
     """메쉬가 스킨되어 있는지 확인한다."""
     for mod in get_node_by_name(mesh).modifiers:
-        if rt.classOf(mod) == rt.Skin:
+        if rt.ClassOf(mod) == rt.Skin:
             return True
     else:
         return False
@@ -346,7 +363,7 @@ def is_skinned_mesh(mesh: str) -> bool:
 
 def get_skin_node(mesh: str):
     for mod in get_node_by_name(mesh).modifiers:
-        if rt.classOf(mod) == rt.Skin:
+        if rt.ClassOf(mod) == rt.Skin:
             return mod
     else:
         return None
@@ -368,7 +385,7 @@ def get_influences(mesh: str) -> List[str]:
 def set_auto_frame_range_for_animation_keys():
     """애니메이션 키가 있는 프레임 범위로 프레임 범위를 설정한다."""
     min_frame, max_frame = get_animation_range()
-    rt.animationRange = rt.interval(min_frame, max_frame)
+    rt.animationRange = rt.Interval(min_frame, max_frame)
 
 
 def transfer(source: str, target: str):
@@ -392,7 +409,7 @@ def make_axis_tripod(node_names: List[str]):
 
     node_names = [node_names] if isinstance(node_names, str) else node_names
     for node_name in node_names:
-        point = ncm.point(node_name + name_suffix)
+        point = ncm.Point(node_name + name_suffix)
         transfer(point.name, node_name)
         point.parent = node_name
         point.axis_tripod = True
@@ -423,7 +440,7 @@ def make_curve_from_vector(name: str, vector: np.ndarray):
     """vector를 curve로 변환한다"""
     points = np.zeros((2, 3))
     points[1] = vector
-    return ncm.curve(name, points)
+    return ncm.Curve(name, points)
 
 
 def get_orthogonal_vector_to_another_vector(vector_a, vector_b):
@@ -443,16 +460,16 @@ def get_animation_range():
     max_frame = None
 
     for node in rt.objects:
-        pos_ctrl = rt.getPropertyController(node.controller, 'Position')
-        rot_ctrl = rt.getPropertyController(node.controller, 'Rotation')
-        scale_ctrl = rt.getPropertyController(node.controller, 'Scale')
+        pos_ctrl = rt.GetPropertyController(node.controller, 'Position')
+        rot_ctrl = rt.GetPropertyController(node.controller, 'Rotation')
+        scale_ctrl = rt.GetPropertyController(node.controller, 'Scale')
 
         for ctrl in [pos_ctrl, rot_ctrl, scale_ctrl]:
             if rt.ClassOf(ctrl) != rt.UndefinedClass:
                 key_count = rt.NumKeys(ctrl)
                 if key_count > 0:
-                    min_f = int(rt.getKeyTime(ctrl, 1))
-                    max_f = int(rt.getKeyTime(ctrl, key_count))
+                    min_f = int(rt.GetKeyTime(ctrl, 1))
+                    max_f = int(rt.GetKeyTime(ctrl, key_count))
                     if min_frame is None or min_f < min_frame:
                         min_frame = min_f
 

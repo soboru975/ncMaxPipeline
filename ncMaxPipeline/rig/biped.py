@@ -13,29 +13,9 @@ from ncMaxPipeline.rig import nodes
 from sympy import symbols, Eq, solve, sqrt
 
 
-def biped(name: str = 'Bip001'):
-    """biped 객체를 반환한다
-    
-    centimeter를 기준으로 작업이 되어 있어서 이를 바꿔준다.
-    """
-    if str(rt.units.SystemType) != 'centimeters':
-        print(f"System unit is not centimeters: {rt.units.SystemType}")
-        print(f"Automatically change system unit to centimeters")
-        rt.units.SystemType = rt.Name('centimeters')
-    bp = _Biped(name)
-    bp.make_preset = _BipedMakePresets.PROJECT_M
-    bp.bone_preset = _BipedBonePresets.PROJECT_M
-    return bp
-
-
-def fbx_character(root: str = 'root'):
-    """fbx로 불러온 캐릭터의 root bone이름을 넣어준다."""
-    return _FBXCharacter(root)
-
-
 def get_biped_names():
     """바이패드 객체들의 이름을 반환한다"""
-    pass
+    raise NotImplementedError
 
 
 @dataclass
@@ -203,7 +183,7 @@ class _SpinesAnimationTransfer(_BipedBoneAnimationTransferBase):
                     self.anim_spine_transforms.calculate()
                     for i, spine_bone in enumerate(spine_bones):
                         if self.anim_spine_transforms.rots[i] is not None:
-                            rt.biped.setTransform(spine_bone.node,
+                            rt.Biped.setTransform(spine_bone.node,
                                                   rt.Name('rotation'),
                                                   self.anim_spine_transforms.rots[i],
                                                   True)
@@ -264,16 +244,16 @@ class _BipedBoneToFBXBoneMatcherBase(ABC):
             setKey or setSelectedKey
         """
         if self.bone.is_com:
-            rt.biped.addNewKey(self.bone.node.controller.vertical.controller, ncm.get_current_frame())
-            rt.biped.addNewKey(self.bone.node.controller.horizontal.controller, ncm.get_current_frame())
-            rt.biped.addNewKey(self.bone.node.controller.turning.controller, ncm.get_current_frame())
+            rt.Biped.addNewKey(self.bone.node.controller.vertical.controller, ncm.get_current_frame())
+            rt.Biped.addNewKey(self.bone.node.controller.horizontal.controller, ncm.get_current_frame())
+            rt.Biped.addNewKey(self.bone.node.controller.turning.controller, ncm.get_current_frame())
         else:
             if self.bone.pure_name in ['Clavicle', 'UpperArm', 'Forearm', 'Hand', 'Head']:
-                rt.biped.setKey(self.bone.node, True, True, True)
+                rt.Biped.setKey(self.bone.node, True, True, True)
             elif any(name in self.bone.pure_name for name in ['Finger', 'Neck']):
-                rt.biped.setKey(self.bone.node, True, True, True)
+                rt.Biped.setKey(self.bone.node, True, True, True)
             else:
-                rt.biped.setSelectedKey(self.bone.node.controller)
+                rt.Biped.setSelectedKey(self.bone.node.controller)
 
 
 class _BipedBoneScaleToFBXBoneMatcherBase(_BipedBoneToFBXBoneMatcherBase):
@@ -365,13 +345,13 @@ class _ToeBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
 
     def _execute_match(self):
         fbx_toe_len = self._get_fbx_toe_length()
-        foot_scale = rt.biped.getTransform(self.biped.bones[self.bone.parent].node,
+        foot_scale = rt.Biped.getTransform(self.biped.bones[self.bone.parent].node,
                                            rt.Name('scale'))
-        old_toe_scale = rt.biped.getTransform(self.bone.node, rt.Name('scale'))
+        old_toe_scale = rt.Biped.getTransform(self.bone.node, rt.Name('scale'))
         scale = rt.Point3(old_toe_scale.x * fbx_toe_len / old_toe_scale.x,
                           old_toe_scale.y,
                           foot_scale.z)
-        rt.biped.setTransform(self.bone.node, rt.Name('scale'), scale, False)
+        rt.Biped.setTransform(self.bone.node, rt.Name('scale'), scale, False)
 
     def _get_fbx_toe_length(self):
         if self.bone.drt == 'L':
@@ -430,11 +410,11 @@ class _FootBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
         x_rate = np.linalg.norm(fbx_foot_ptn - fbx_heel_ptn) / np.linalg.norm(bone_foot_ptn - bone_heel_ptn)
         y_rate = np.linalg.norm(fbx_heel_ptn - fbx_toe_ptn) / np.linalg.norm(bone_heel_ptn - bone_toe_ptn)
 
-        old_scale = rt.biped.getTransform(self.bone.node, rt.Name('scale'))
+        old_scale = rt.Biped.getTransform(self.bone.node, rt.Name('scale'))
         scale = rt.Point3(float(old_scale.x * x_rate),
                           float(old_scale.y * y_rate),
                           old_scale.z)
-        rt.biped.setTransform(self.bone.node, rt.Name('scale'), scale, False)
+        rt.Biped.setTransform(self.bone.node, rt.Name('scale'), scale, False)
 
 
 class _FootBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
@@ -477,11 +457,11 @@ class _SpineBoneScaleToFBXBoneMatcher(_BipedBoneScaleToFBXBoneMatcherBase):
 
     def _set_width_to_spines(self, biped_spines_bones):
         """가로가 너무 얇쌍해서 pelvis의 크기에 맞춘다."""
-        pelvis_sz = rt.biped.getTransform(self.biped.bones['Pelvis'].node, rt.Name('scale')).z * 1.5
-        old_scale = rt.biped.getTransform(biped_spines_bones[0].node, rt.Name('scale'))
+        pelvis_sz = rt.Biped.getTransform(self.biped.bones['Pelvis'].node, rt.Name('scale')).z * 1.5
+        old_scale = rt.Biped.getTransform(biped_spines_bones[0].node, rt.Name('scale'))
         for bone in biped_spines_bones:
             scale = rt.Point3(old_scale.x, old_scale.y, pelvis_sz)
-            rt.biped.setTransform(bone.node, rt.Name('scale'), scale, False)
+            rt.Biped.setTransform(bone.node, rt.Name('scale'), scale, False)
 
 
 class _SpineBonePoseToFBXBoneMatcher(_BipedBonePoseToFBXBoneMatcherBase):
@@ -1131,7 +1111,7 @@ class _BipedBoneMirror:
     양쪽 모두를 직접 조절하는 방식으로 진행하였다. 그래서 이 구문은 백업차원에서 남겨놓는다. 
     """
 
-    def __init__(self, biped: '_Biped'):
+    def __init__(self, biped: 'Biped'):
         self.biped = biped
 
     def __call__(self):
@@ -1139,13 +1119,13 @@ class _BipedBoneMirror:
         collection_name = 'left_bones'
         left_bones = self.biped.bones.find_bones_by_direction('L')
         ctrl = left_bones[0].node.controller
-        collection = rt.biped.createCopyCollection(ctrl, collection_name)
-        pos = rt.biped.copyBipPosture(ctrl, collection, [bone.node for bone in left_bones], rt.Name('snapNone'))
-        rt.biped.pasteBipPosture(ctrl, pos, True, rt.Name('pstdefault'), False, False, False, True)
+        collection = rt.Biped.createCopyCollection(ctrl, collection_name)
+        pos = rt.Biped.copyBipPosture(ctrl, collection, [bone.node for bone in left_bones], rt.Name('snapNone'))
+        rt.Biped.pasteBipPosture(ctrl, pos, True, rt.Name('pstdefault'), False, False, False, True)
         self.biped.figure_mode = True
-        rt.biped.pasteBipPosture(ctrl, pos, True, rt.Name('pstdefault'), False, False, False, True)
+        rt.Biped.pasteBipPosture(ctrl, pos, True, rt.Name('pstdefault'), False, False, False, True)
         self.biped.figure_mode = False
-        rt.biped.pasteBipPosture(ctrl, pos, False, rt.Name('pstdefault'), False, False, False, True)
+        rt.Biped.pasteBipPosture(ctrl, pos, False, rt.Name('pstdefault'), False, False, False, True)
         self.biped.bones[0].world_t = ptn
 
 
@@ -1226,7 +1206,7 @@ class _BipedBone(nodes._Object):
         local_rot_mat.rotation = rt.EulerToQuat(rt.EulerAngles(float(value[0]),
                                                                float(value[1]),
                                                                float(value[2])))
-        rt.biped.setTransform(self.node, rt.Name('rotation'), (local_rot_mat * world_rot_mat).rotation, False)
+        rt.Biped.setTransform(self.node, rt.Name('rotation'), (local_rot_mat * world_rot_mat).rotation, False)
 
     @property
     def world_t(self):
@@ -1237,9 +1217,9 @@ class _BipedBone(nodes._Object):
     def world_t(self, value):
         if isinstance(value, (np.ndarray, tuple, list)):
             ptn = rt.Point3(float(value[0]), float(value[1]), float(value[2]))
-            rt.biped.setTransform(self.node, rt.Name('pos'), ptn, False)
+            rt.Biped.setTransform(self.node, rt.Name('pos'), ptn, False)
         elif isinstance(value, type(rt.Point3)):
-            rt.biped.setTransform(self.node, rt.Name('pos'), value, False)
+            rt.Biped.setTransform(self.node, rt.Name('pos'), value, False)
         else:
             raise ValueError(type(value))
 
@@ -1253,9 +1233,9 @@ class _BipedBone(nodes._Object):
         """biiped의 bone의 rotation을 설정하는 방법은 약간 다르다"""
         if isinstance(value, (np.ndarray, tuple, list)):
             rot = rt.EulerToQuat(rt.EulerAngles(float(value[0]), float(value[1]), float(value[2])))
-            rt.biped.setTransform(self.node, rt.Name('rotation'), rot, False)
+            rt.Biped.setTransform(self.node, rt.Name('rotation'), rot, False)
         elif isinstance(value, type(rt.Rotation)):
-            rt.biped.setTransform(self.node, rt.Name('rotation'), value, False)
+            rt.Biped.setTransform(self.node, rt.Name('rotation'), value, False)
         else:
             raise ValueError(type(value))
 
@@ -1266,13 +1246,13 @@ class _BipedBone(nodes._Object):
     @world_mat.setter
     def world_mat(self, value):
         """scale이 적용이 잘 되려나"""
-        rt.biped.setTransform(self.node, rt.Name('pos'), value.position, False)
-        rt.biped.setTransform(self.node, rt.Name('rotation'), value.rotation, False)
-        rt.biped.setTransform(self.node, rt.Name('scale'), value.scale, False)
+        rt.Biped.setTransform(self.node, rt.Name('pos'), value.position, False)
+        rt.Biped.setTransform(self.node, rt.Name('rotation'), value.rotation, False)
+        rt.Biped.setTransform(self.node, rt.Name('scale'), value.scale, False)
 
     @property
     def size(self):
-        return rt.biped.getTransform(self.node, rt.Name('scale'))
+        return rt.Biped.getTransform(self.node, rt.Name('scale'))
 
     @size.setter
     def size(self, value):
@@ -1283,7 +1263,7 @@ class _BipedBone(nodes._Object):
         """
         if isinstance(value, (float, np.float64)):
             scale = rt.Point3(float(value), float(value), float(value))
-            rt.biped.setTransform(self.node, rt.Name('scale'), scale, False)
+            rt.Biped.setTransform(self.node, rt.Name('scale'), scale, False)
         else:
             raise NotImplementedError(value, type(value))
 
@@ -1324,7 +1304,7 @@ class _BipedBone(nodes._Object):
             raise NotImplementedError
 
     @property
-    def biped(self) -> '_Biped':
+    def biped(self) -> 'Biped':
         return self.bones.biped
 
     @property
@@ -1413,7 +1393,7 @@ class _FBXMesh(nodes._Mesh):
 
 
 class _FBXMeshes(Sequence[_FBXMesh]):
-    def __init__(self, character: '_FBXCharacter'):
+    def __init__(self, character: 'FBXCharacter'):
         self.char = character
         self._meshes = self._get_meshes_from_bones()
 
@@ -1458,7 +1438,7 @@ class _FBXMeshes(Sequence[_FBXMesh]):
 class _FBXDummyBones(Sequence[_FBXDummyBone]):
     """fbx를 하였을 때 dummy로 들어온 뼈들을 담는 클래스"""
 
-    def __init__(self, character: '_FBXCharacter', root: str):
+    def __init__(self, character: 'FBXCharacter', root: str):
         self.char = character
         self._bones = self._get_bones_from_root(root)
 
@@ -1507,7 +1487,7 @@ class _FBXDummyBones(Sequence[_FBXDummyBone]):
 
 class _BipedBones(Sequence[_BipedBone]):
 
-    def __init__(self, biped: '_Biped'):
+    def __init__(self, biped: 'Biped'):
         self.biped = biped
 
     def __len__(self):
@@ -1577,7 +1557,8 @@ class _BipedBones(Sequence[_BipedBone]):
 
 class _BipedToFBXBoneLinker:
     """biped bone에 fbx bone들을 링크 시킨다."""
-    def __init__(self, biped: '_Biped'):
+
+    def __init__(self, biped: 'Biped'):
         self.biped = biped
 
     def __call__(self):
@@ -1681,7 +1662,7 @@ class _SpinePlaneConverter:
 
 
 class _SpineTransformsCalculatorBase:
-    def __init__(self, biped: '_Biped'):
+    def __init__(self, biped: 'Biped'):
         self.biped = biped
         self._rots = None
 
@@ -2010,7 +1991,7 @@ class _LastSpineTargetForAnimationTransfer(nodes.Point):
 
 
 class _BipedToFBXCharacterMatcher:
-    def __init__(self, biped: '_Biped'):
+    def __init__(self, biped: 'Biped'):
         self.biped = biped
         self.init_spine_transforms = _InitialSpineTransformsCalculator(biped)
 
@@ -2044,7 +2025,7 @@ class _BipedToFBXCharacterMatcher:
 
 
 class _FBXCharacterToBipedAnimationTransfer:
-    def __init__(self, biped: '_Biped'):
+    def __init__(self, biped: 'Biped'):
         self.biped = biped
         self.anim_spine_transforms = _AnimatedSpineTransformsCalculator(biped)
 
@@ -2060,7 +2041,7 @@ class _FBXCharacterToBipedAnimationTransfer:
             bone.transfer_animation(start_frame, end_frame)
 
 
-class _Biped:
+class Biped:
     """바이패드 클래스"""
 
     def __init__(self, name: str = None):
@@ -2069,8 +2050,8 @@ class _Biped:
             self._preset: 바이패드 생성시 사용하는 preset
         """
         self._name = name
-        self._make_preset = None
-        self._bone_preset = None
+        self._change_unit_scale()
+        self._set_init_presets()
         if ncm.exists_objects(name):
             self.node = ncm.get_node_by_name(name)
         else:
@@ -2191,6 +2172,16 @@ class _Biped:
         if make_match_guide:
             self._make_match_guides()
 
+    def _set_init_presets(self):
+        self._make_preset = _BipedMakePresets.PROJECT_M
+        self._bone_preset = _BipedBonePresets.PROJECT_M
+
+    def _change_unit_scale(self):
+        if str(rt.units.SystemType) != 'centimeters':
+            print(f"System unit is not centimeters: {rt.units.SystemType}")
+            print(f"Automatically change system unit to centimeters")
+            rt.units.SystemType = rt.Name('centimeters')
+
     def _make_match_guides(self):
         """biped의 위치를 수정할 때 사용할 match guide들도 같이 만든다.
         
@@ -2295,13 +2286,13 @@ class _UnavailableBipedBoneToFBXBoneMatchGuide(_BipedBoneToFBXBoneMatchGuideBase
         pass
 
 
-class _FBXCharacter:
+class FBXCharacter:
     """fbx로 가져온 character를 지칭한다
     
     fbx로 가져온 파일을 정리하거나 converting하는데 쓴다.
     """
 
-    def __init__(self, root: str):
+    def __init__(self, root: str = 'root'):
         if not ncm.exists_objects(root):
             print(f"Object does not exist: {root}")
             self._exists = False
