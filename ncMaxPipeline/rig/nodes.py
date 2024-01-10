@@ -6,22 +6,6 @@ import numpy as np
 from pymxs import runtime as rt
 
 
-def node(name: str):
-    return _Node(name)
-
-
-def dummy(name: str):
-    return _Dummy(name)
-
-
-def point(name: str):
-    return _Point(name)
-
-
-def curve(name: str, points: np.ndarray = None):
-    return _Curve(name, points)
-
-
 class _AttributeBase:
     def __init__(self, attr_name):
         self.attr_name = attr_name
@@ -42,7 +26,8 @@ class _BoolAttribute(_AttributeBase):
 
 
 class _Object(ABC):
-    """
+    """node보다 더 상위 개념
+    
     그냥 node에 포함하면 되지 왜 이걸 굳이 나눴냐 궁금할 수 있다.
     tx, ty.. 같은 property들이 일반 node와 biped bone이 적용방식이 서로 너무 달랐다.
     그래서 node의 tx, ty.. 같은 property들이 상속되기를 원치 않아서 나누었다.
@@ -117,8 +102,10 @@ class _Object(ABC):
             return False
 
 
-class _Node(_Object):
-    """(현재 개념이 정확하지는 않지만) max는 노드 기반이 아니기 때문에
+class Node(_Object):
+    """일반 노드의 상위 클래스
+    
+    (현재 개념이 정확하지는 않지만) max는 노드 기반이 아니기 때문에
     노드라는 개념은 씬에 존재하는 object만을 뜻하는 것으로 한다.
     
     deform 스택 등은 노드가 아니다.
@@ -465,9 +452,9 @@ class _Node(_Object):
     def make(self, name: str):
         pass
 
-    def make_grp(self, group_name: str = 'grp') -> '_Dummy':
+    def make_grp(self, group_name: str = 'grp') -> 'Dummy':
         """그룹을 만들어준다."""
-        grp = ncm.dummy(self.name + '_' + group_name)
+        grp = ncm.Dummy(self.name + '_' + group_name)
         grp.world_t = self.world_t
         grp.world_r = self.world_r
 
@@ -491,23 +478,22 @@ class _Node(_Object):
 
     def _add_children(self, child, children: list):
         children.append(child)
-        child_node = ncm.node(child)
+        child_node = ncm.Node(child)
         for child in child_node.children:
             self._add_children(child, children)
 
 
-class _Bone(_Node):
-    def test(self):
-        print("TTTTT")
+class Bone(Node):
+    pass
 
 
-class _Dummy(_Node):
+class Dummy(Node):
     def make(self, name: str):
         self.node = rt.Dummy()
         self.node.name = name
 
 
-class _Curve(_Node):
+class Curve(Node):
     def __init__(self, name: str, points: np.ndarray):
         self.points = points
         super().__init__(name)
@@ -522,7 +508,7 @@ class _Curve(_Node):
         rt.UpdateShape(self.node)
 
 
-class _Point(_Node):
+class Point(Node):
     cross = _BoolAttribute('CROSS')
     box = _BoolAttribute('BOX')
     axis_tripod = _BoolAttribute('AXISTRIPOD')
@@ -534,11 +520,17 @@ class _Point(_Node):
     def __init__(self, name: str):
         """point를 만들어준다.
         
-        point의 경우 생성시 이전에 씬에 존재한 point의 속성들을 그대로 이어받는것 같다.
-        만약에 box가 켜져있으면 따로 설정을 안해도 똑같이 box가 켜지는거 같다.
-        난 그런게 싫어서 locator처럼 보이게 일관되게 생기도록하였다. 
+        Notes:
+            다른 point의 속성을 이어받는다.
+                point의 경우 씬에 A point가 있는데 B point를 만드는 경우. 
+                이전에 씬에 존재한 A point의 속성들을 B point가 그대로 이어받는것 같다.
+                만약에 box가 켜져있으면 따로 설정을 안해도 똑같이 box가 켜지는거 같다.
+                난 그런게 싫어서 maya의 locator처럼 보이게 일관되게 생기도록하였다. 
         """
         super().__init__(name)
+        self._set_default_shape()
+
+    def _set_default_shape(self):
         self.center_marker = False
         self.axis_tripod = False
         self.cross = True
@@ -552,5 +544,5 @@ class _Point(_Node):
         self.node.name = name
 
 
-class _Mesh(_Node):
+class _Mesh(Node):
     pass
