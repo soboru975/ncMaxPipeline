@@ -115,7 +115,7 @@ class _HelperPointsMaker(_HelperPointsMakerBase):
         print('ㅎㅎㅎㅎ')
 
     def efg(self):
-        print('ㄱㄱㄱㄱ')
+        print('ㄱㄱㅏㅣㅘㅣㅓㅠㅏㅣㅓㅠㅏㅣㅓㅠㅏㅣㅓㅠㅏㅓㄱㄱ')
 
 
 # class HelperPoint
