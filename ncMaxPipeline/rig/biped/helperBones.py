@@ -113,9 +113,9 @@ class _HelperPointsMaker(_HelperPointsMakerBase):
     
     def abcd(self):
         print('ㅎㅎㅎㅎ')
-        
+
     def efg(self):
-        print('ㅋㅋㅋㅋ')
+        print('ㄱㄱㄱㄱ')
 
 
 # class HelperPoint
