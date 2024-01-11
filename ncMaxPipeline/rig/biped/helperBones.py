@@ -110,6 +110,9 @@ class _HelperPointsMaker(_HelperPointsMakerBase):
         self.elbow
         self.buttock
         self.knee
+    
+    def abcd(self):
+        print('ㅎㅎㅎㅎ')
 
 
 # class HelperPoint
